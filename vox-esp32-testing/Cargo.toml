@@ -1,0 +1,13 @@
+[package]
+name = "vox-esp32-testing"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+esp-hal.workspace = true
+esp-backtrace.workspace = true
+esp-alloc.workspace = true
+embedded-graphics.workspace = true
+heapless.workspace = true
+postcard.workspace = true
+serde.workspace = true

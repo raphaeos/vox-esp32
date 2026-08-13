@@ -1,0 +1,34 @@
+[workspace]
+members = ["vox-esp32-testing"]
+resolver = "2"
+
+[workspace.dependencies]
+# --- Core ESP32 & Embedded HALs ---
+esp-hal = { version = "1.0.0-rc.3", features = ["esp32s3", "float-save-restore"] }
+esp-backtrace = { version = "0.15.0", features = ["esp32s3", "panic-handler", "exception-handler", "print-uart"] }
+esp-alloc = { version = "0.6.0" }
+embedded-hal = "1.0.0"
+embedded-hal-async = "1.0.0"
+
+# --- Async Runtime (Crucial for Low-Power Sensors) ---
+embassy-executor = { version = "0.6.3", features = ["arch-xtensa", "executor-thread"] }
+embassy-time = { version = "0.4.0" }
+
+# --- Math & Data Parsing (No Standard Library) ---
+micromath = "2.1.0"        # Fast embedded math (sin, cos, trig) without standard library
+num-traits = { version = "0.2.19", default-features = false }
+heapless = "0.8.0"         # Fixed-capacity collections (Vec, String, Map) with NO heap allocation
+serde = { version = "1.0.200", default-features = false, features = ["derive"] }
+postcard = { version = "1.0.10", features = ["alloc"] } # Ultra-dense binary packet serialization
+
+# --- Communications & Local Networking ---
+smoltcp = { version = "0.12.0", default-features = false, features = ["medium-ethernet", "proto-ipv4", "socket-raw"] }
+embedded-nal = "0.9.0"     # Network Abstraction Layer for drivers
+
+# --- UI, Displays, & Sensor Interfacing ---
+embedded-graphics = "0.8.1" # Standard engine to draw text, shapes, and UIs on screens
+mipidsi = "0.9.0"           # Common SPI display driver framework (ST7789, ILI9341 screens)
+
+# --- Cryptography & Security (Off-Grid Messaging) ---
+chacha20poly1305 = { version = "0.10.1", default-features = false, features = ["alloc"] } # Fast authenticated encryption
+sha2 = { version = "0.10.8", default-features = false } # Hashing and integrity verification
