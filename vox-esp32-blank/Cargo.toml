@@ -1,5 +1,5 @@
 [package]
-name = "vox-esp32-testing"
+name = "vox-esp32-blank"
 version = "0.1.0"
 authors = ["Raph <iam@raphaeos.com>"]
 edition = "2021"
@@ -7,7 +7,7 @@ resolver = "2"
 rust-version = "1.82"
 
 [[bin]]
-name = "vox-esp32-testing"
+name = "vox-esp32-blank"
 harness = false # do not use the built-in cargo test harness -> resolve rust-analyzer errors
 
 [profile.release]

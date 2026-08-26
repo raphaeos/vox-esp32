@@ -1,14 +1,26 @@
 [build]
-target = "xtensa-esp32s3-none-elf"
+target = "xtensa-esp32s3-espidf"
 
-[target.xtensa-esp32s3-none-elf]
+[target.'cfg(target_os = "espidf")']
+linker = "ldproxy"
 runner = "espflash flash --monitor"
-rustflags = [
-  "-C", "link-arg=-Tlinkall.x",
-]
+rustflags = [ "--cfg",  "espidf_time64"]
+
+[unstable]
+build-std = ["std", "panic_abort"]
+
+[env]
+MCU = "esp32s3"
+ESP_IDF_VERSION = "v5.5.3"
+ESP_IDF_TOOLS_INSTALL_DIR = "global"
+IDF_PATH = "/home/admin/.espressif/esp-idf/v5.5.3"
+
+# Uncomment this if you have moved the target dir by setting CARGO_TARGET_DIR or similar.
+# Required for now due to embuild limitations.
+#CARGO_WORKSPACE_DIR = { value = "", relative = true }
 
 [source.crates-io]
-replace-with = "vendored-sources"
+replace-with = "romt-mirror"
 
-[source.vendored-sources]
-directory = "vendor"
+[registries.romt-mirror]
+index = "http://localhost:8000/git/crates.io-index"
