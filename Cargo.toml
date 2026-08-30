@@ -1,8 +1,12 @@
 [workspace]
-members = ["vox-esp32-blank", "vox-esp32-testing"]
+members = ["vox-esp32-core", "vox-esp32-blank", "vox-esp32-testing", "vox-esp32-solar"]
 resolver = "2"
 
 [workspace.dependencies]
+# --- Workspace ---
+vox-esp32-core = { path = "vox-esp32-core" }
+
+# --- Core ---
 log = "0.4"
 anyhow = "1.0"
 
@@ -12,6 +16,11 @@ esp-idf-hal = "0.46.2"
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
 embassy-time = { version = "0.5", features = ["generic-queue-8"] }
+
+# --- Async ---
+edge-executor = "0.5"
+futures = "0.3"
+async-channel = "2.5.0"
 
 # --- Math & Data Parsing (No Standard Library) ---
 num-traits = { version = "0.2.19", default-features = false }

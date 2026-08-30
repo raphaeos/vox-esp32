@@ -1,70 +1,54 @@
 use anyhow::Result;
-use esp_idf_hal::{delay::FreeRtos};
-use esp_idf_hal::gpio::PinDriver;
-use esp_idf_hal::peripherals::Peripherals;
-use esp_idf_hal::sys::esp_random;
-use std::thread::sleep;
-use std::time::Duration;
-use smart_leds::hsv::{hsv2rgb, Hsv};
-use smart_leds_trait::SmartLedsWrite;
-use ws2812_esp32_rmt_driver::Ws2812Esp32Rmt;
-
-const LED_COLOR_GREEN: u8 = 85; // 520nm
-const LET_COLOR_TEAL: u8 = 97; // 504nm
+use embassy_time::Duration;
+use vox_esp32_core::controller::{Controller, LEDColor, LEDStatus};
 
 fn main() -> Result<()> {
-    // It is necessary to call this function once. Otherwise, some patches to the runtime
-    // implemented by esp-idf-sys might not link properly. See https://github.com/esp-rs/esp-idf-template/issues/71
-    esp_idf_svc::sys::link_patches();
+    let mut controller = vox_esp32_core::init()?;
 
-    // Bind the log crate to the ESP Logging facilities
-    esp_idf_svc::log::EspLogger::initialize_default();
+    //controller.set_led_status(LEDColor::Purple, LEDStatus::On)?;
 
-    log::info!("Hello, world!");
+    //controller.set_led_status(LEDColor::Blue, LEDStatus::Blink)?;
 
-    // 2. Take control of all hardware peripherals
-    let peripherals = Peripherals::take()?;
+    edge_executor::block_on(controller.executor.run(async {
+        //if let Err(e) = run(&mut controller).await {
+        //    log::error!("Failed to run: {}", e);
+        //}
 
-    // 3. Configure the BOOT Button (GPIO0) as an Input with internal pull-up active
-    let mut boot_button = PinDriver::input(peripherals.pins.gpio0, esp_idf_hal::gpio::Pull::Up)?;
-
-    // Modern API Fix: Destructure the pin and the specific RMT channel peripheral type
-    let led_pin = peripherals.pins.gpio48;
-    #[allow(deprecated)]
-    let rmt_channel = peripherals.rmt.channel0; 
-
-    let mut ws2812 = Ws2812Esp32Rmt::new(rmt_channel, led_pin).unwrap();
-
-    log::info!("System compiled cleanly with zero warnings.");
-
-
-    // Test Green
-    let pixels = std::iter::repeat(hsv2rgb(Hsv {
-        hue: LET_COLOR_TEAL,
-        sat: 255,
-        val: 50,
-    }))
-    .take(25);
-    ws2812.write(pixels).unwrap();
-
-    /* 
-    log::info!("Start NeoPixel rainbow!");
-
-    let mut hue = unsafe { esp_random() } as u8;
-    loop {
-        let pixels = std::iter::repeat(hsv2rgb(Hsv {
-            hue,
-            sat: 255,
-            val: 12,
-        }))
-        .take(25);
-        ws2812.write(pixels).unwrap();
-
-        sleep(Duration::from_millis(100));
-
-        hue = hue.wrapping_add(10);
-    }
-    */
+        loop {
+            embassy_time::Timer::after(Duration::from_millis(20)).await;
+        }
+    }));
 
     Ok(())
 }
+
+/*
+async fn run(controller: &mut Controller) -> Result<()> {
+    let mut last_button_state = false;
+
+    // 5. Main Application Thread Loop
+    loop {
+        let is_pressed = controller.boot_button.is_low();
+
+        // Detect a clean falling edge button press
+        if is_pressed && !last_button_state {
+            log::info!("Button Press Detected! Overriding background blink safely.");
+
+            controller.set_led_status(LEDColor::Green, LEDStatus::On)?;
+        }
+        // Reset state when button is released
+        else if !is_pressed && last_button_state {
+            log::info!("Button Released! Re-engaging background blink.");
+
+            controller.set_led_status(LEDColor::Purple, LEDStatus::Blink)?;
+        }
+
+        last_button_state = is_pressed;
+
+        // Yield control back to the executor so the blink loop can run
+        embassy_time::Timer::after(Duration::from_millis(20)).await;
+    }
+
+    Ok(())
+}
+*/

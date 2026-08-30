@@ -24,9 +24,7 @@ esp-idf-svc.workspace = true
 esp-idf-hal.workspace = true
 embassy-time.workspace = true
 
-smart-leds.workspace = true
-smart-leds-trait.workspace = true
-ws2812-esp32-rmt-driver.workspace = true
+vox-esp32-core.workspace = true
 
 [build-dependencies]
 embuild.workspace = true

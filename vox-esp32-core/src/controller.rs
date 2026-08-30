@@ -1,24 +1,33 @@
-use crate::esp32::Peripherals;
-
-use anyhow::{anyhow, Result};
-use edge_executor::LocalExecutor;
-#[cfg(feature = "esp32s3-rgb-led")]
-use embassy_time::Duration;
-use esp_idf_hal::gpio::{Input, PinDriver};
-use futures::future::AbortHandle;
-#[cfg(feature = "esp32s3-rgb-led")]
-use smart_leds::{
-    hsv::{hsv2rgb, Hsv},
-    SmartLedsWrite, RGB8,
-};
 use std::sync::Arc;
 use std::sync::Mutex;
+
+use anyhow::{anyhow, Result};
+use async_channel::{Receiver, unbounded};
+use async_channel::Sender;
+use edge_executor::LocalExecutor;
+use embassy_time::Duration;
+#[cfg(feature = "esp32s3-rgb-led")]
+use embassy_time::Timer;
+use esp_idf_hal::gpio::{Input, PinDriver};
+use futures::future::{self};
+use futures::FutureExt;
+#[cfg(feature = "esp32s3-rgb-led")]
+use futures::pin_mut;
+#[cfg(feature = "esp32s3-rgb-led")]
+use futures::select_biased;
+#[cfg(feature = "esp32s3-rgb-led")]
+use smart_leds::{
+    hsv::{Hsv, hsv2rgb},
+    RGB8, SmartLedsWrite,
+};
 #[cfg(feature = "esp32s3-rgb-led")]
 use ws2812_esp32_rmt_driver::{
     driver::color::LedPixelColorGrb24, LedPixelEsp32Rmt, Ws2812Esp32Rmt,
 };
 
-pub const BRIGHTNESS_DEFAULT: u8 = 50;
+use crate::esp32::Peripherals;
+
+pub const BRIGHTNESS_DEFAULT: u8 = 12;
 pub const BRIGHTNESS_MIN: u8 = 10;
 pub const BRIGHTNESS_MAX: u8 = 255;
 pub const BRIGHTNESS_OFF: u8 = 0;
@@ -76,7 +85,7 @@ impl LEDDriver {
     }
 
     fn write(&self, hue: u8, sat: u8, val: u8) -> Result<()> {
-        let pixels = std::iter::repeat(hsv2rgb(Hsv { hue, sat, val })).take(1);
+        let pixels = [hsv2rgb(Hsv { hue, sat, val })].into_iter();
 
         let mut driver = self
             .ws2812
@@ -93,8 +102,9 @@ pub struct LED {
     color: LEDColor,
     brightness: u8,
     status: LEDStatus,
+    blink_delay: Duration,
+    blink_state: bool,
     driver: Arc<LEDDriver>,
-    blink_aborter: Option<AbortHandle>,
 }
 
 #[cfg(feature = "esp32s3-rgb-led")]
@@ -103,62 +113,181 @@ impl LED {
         Ok(Self {
             color: LEDColor::Green,
             brightness: BRIGHTNESS_DEFAULT,
+            blink_delay: Duration::from_millis(500),
+            blink_state: false,
             status: LEDStatus::Off,
             driver: Arc::new(LEDDriver::new(peripherals)?),
-            blink_aborter: None,
         })
     }
 
-    fn set(
+    fn update(
         &mut self,
-        executor: &edge_executor::LocalExecutor<'static>,
-        color: LEDColor,
-        status: LEDStatus,
-        blink_delay: Option<Duration>,
     ) -> Result<()> {
-        if let Some(aborter) = self.blink_aborter.take() {
-            aborter.abort();
-        }
-
-        if status == LEDStatus::Blink {
-            let duration = blink_delay.unwrap_or(Duration::from_millis(500));
-            let brightness = self.brightness;
-            let driver = self.driver.clone();
-
-            let (splittable_fut, aborter) = futures::future::abortable(async move {
-                let mut is_on = true;
-                loop {
-                    let cur_brightness = if is_on { brightness } else { BRIGHTNESS_OFF };
-
-                    //self.write(color.hue(), 255, cur_brightness)?;
-
-                    is_on = !is_on;
-                    embassy_time::Timer::after(duration).await;
+        let brightness = match self.status {
+            LEDStatus::Off => BRIGHTNESS_OFF,
+            LEDStatus::Blink => {
+                if self.blink_state {
+                    self.brightness
+                } else {
+                    BRIGHTNESS_OFF
                 }
+            }
+            _ => self.brightness,
+        };
 
-                Ok::<(), anyhow::Error>(())
-            });
-
-            executor
-                .spawn(async move {
-                    let _ = splittable_fut.await;
-                })
-                .detach();
-
-            self.blink_aborter = Some(aborter);
-        } else {
-            let brightness = match status {
-                LEDStatus::Off => BRIGHTNESS_OFF,
-                _ => self.brightness,
-            };
-
-            self.driver.write(color.hue(), 255, brightness)?;
-        }
-
-        self.color = color;
-        self.status = status;
+        (*self.driver).write(self.color.hue(), 255, brightness)?;
 
         Ok(())
+    }
+
+    fn toggle_blink(
+        &mut self,
+    ) -> Result<()> {
+        if self.status == LEDStatus::Blink {
+            self.blink_state = !self.blink_state;
+            self.update()
+        } else {
+            Err(anyhow!("toggle_blink called when status != LEDStatus::Blink"))
+        }
+    }
+}
+
+#[cfg(feature = "esp32s3-rgb-led")]
+struct LEDSetMessage {
+    color: Option<LEDColor>,
+    status: Option<LEDStatus>,
+    brightness: Option<u8>,
+    blink_delay: Option<Duration>,
+}
+
+#[cfg(feature = "esp32s3-rgb-led")]
+enum LEDManagerMessage {
+    Set(LEDSetMessage),
+}
+
+#[derive(Clone)]
+pub struct LEDManagerHandle {
+    tx: Sender<LEDManagerMessage>,
+}
+
+impl LEDManagerHandle {
+    pub async fn set(
+        &self,
+        color: Option<LEDColor>,
+        status: Option<LEDStatus>,
+        brightness: Option<u8>,
+        blink_delay: Option<Duration>,
+    ) {
+        let _ = self
+            .tx
+            .send(LEDManagerMessage::Set(LEDSetMessage {
+                color,
+                status,
+                brightness,
+                blink_delay,
+            }))
+            .await;
+    }
+
+    pub async fn status(&self, status: LEDStatus) {
+        let _ = self
+            .tx
+            .send(LEDManagerMessage::Set(LEDSetMessage {
+                color: None,
+                status: Some(status),
+                brightness: None,
+                blink_delay: None,
+            }))
+            .await;
+    }
+
+    pub async fn on(&self) {
+        self.status(LEDStatus::On).await
+    }
+
+    pub async fn off(&self) {
+        self.status(LEDStatus::Off).await
+    }
+}
+
+#[cfg(feature = "esp32s3-rgb-led")]
+pub struct LEDManager;
+
+#[cfg(feature = "esp32s3-rgb-led")]
+impl LEDManager {
+    fn spawn(executor: &mut LocalExecutor<'static>, mut led: LED) -> LEDManagerHandle {
+        let (tx, rx) = unbounded::<LEDManagerMessage>();
+        
+        // Spawn the event loop on edge-executor
+        let _ = executor.spawn(async move {
+            log::info!("Vox ESP32 Core: LED Manager started");
+
+            Self::run(rx, &mut led).await;
+        });
+
+        LEDManagerHandle { tx }
+    }
+
+    async fn run(rx: Receiver<LEDManagerMessage>, led: &mut LED) {
+        loop {
+            let mut recv_fut = rx.recv().fuse();
+
+            let mut timeout_fut = if led.status == LEDStatus::Blink {
+                Timer::after(led.blink_delay).left_future()
+            } else {
+                future::pending::<()>().right_future()
+            }.fuse();
+
+            pin_mut!(recv_fut, timeout_fut);
+
+            select_biased! {
+                msg_res = recv_fut => {
+                    match msg_res {
+                        Ok(msg) => {
+                            Self::process_msg(msg, led).await;
+                        }
+                        Err(_) => {
+                            // Channel was closed, exit the loop safely
+                            break;
+                        }
+                    }
+                },
+                _ = timeout_fut => {
+                    Self::process_timeout(led).await;
+                }
+            }
+        }
+    }
+
+    async fn process_msg(msg: LEDManagerMessage, led: &mut LED) {
+        match msg {
+            LEDManagerMessage::Set(msg) => {
+                if let Some(color) = msg.color {
+                    led.color = color;
+                }
+                if let Some(status) = msg.status {
+                    led.status = status;
+                }
+                if let Some(brightness) = msg.brightness {
+                    led.brightness = brightness;
+                }
+                if let Some(blink_delay) = msg.blink_delay {
+                    led.blink_delay = blink_delay;
+                }
+
+                if let Err(e) = led.update() {
+                    log::error!("Vox ESP32 Core: Failed to update LED: {e}")
+                }
+            }
+        }
+    }
+
+    async fn process_timeout(led: &mut LED) {
+        if led.status == LEDStatus::Blink {
+            if let Err(e) = led.toggle_blink() {
+                log::error!("Vox ESP32 Core: Failed to toggle LED blink: {e}")
+            }
+        }
     }
 }
 
@@ -177,7 +306,7 @@ impl Controller {
         let boot_pin = peripherals.pins.gpio0.take().ok_or(anyhow!(
             "Controller: Failed to take boot pin, GPIO0 already taken"
         ))?;
-        let mut boot_button = PinDriver::input(boot_pin, esp_idf_hal::gpio::Pull::Up)?;
+        let boot_button = PinDriver::input(boot_pin, esp_idf_hal::gpio::Pull::Up)?;
 
         #[cfg(feature = "esp32s3-rgb-led")]
         let led = LED::new(&mut peripherals)?;
