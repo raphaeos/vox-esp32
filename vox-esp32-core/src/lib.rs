@@ -1,5 +1,7 @@
 pub mod controller;
 pub mod esp32;
+#[cfg(feature = "esp32s3-rgb-led")]
+pub mod esp32_led;
 
 use controller::Controller;
 

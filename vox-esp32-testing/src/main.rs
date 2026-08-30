@@ -1,18 +1,15 @@
 use anyhow::Result;
 use embassy_time::Duration;
-use vox_esp32_core::controller::{Controller, LEDColor, LEDStatus};
+use vox_esp32_core::esp32_led::{LEDColor, LEDStatus};
 
 fn main() -> Result<()> {
     let mut controller = vox_esp32_core::init()?;
 
-    //controller.set_led_status(LEDColor::Purple, LEDStatus::On)?;
-
-    //controller.set_led_status(LEDColor::Blue, LEDStatus::Blink)?;
-
     edge_executor::block_on(controller.executor.run(async {
-        //if let Err(e) = run(&mut controller).await {
-        //    log::error!("Failed to run: {}", e);
-        //}
+        controller
+            .led
+            .set(Some(LEDColor::Purple), Some(LEDStatus::Blink), None, None)
+            .await;
 
         loop {
             embassy_time::Timer::after(Duration::from_millis(20)).await;
