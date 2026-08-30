@@ -1,6 +1,7 @@
 use anyhow::{anyhow, Result};
 use edge_executor::{LocalExecutor, Task};
 use esp_idf_hal::gpio::{Input, PinDriver};
+use std::future::Future;
 
 use crate::esp32::Peripherals;
 use crate::esp32_led::{LEDManager, LEDManagerHandle, LED};
@@ -44,5 +45,12 @@ impl Controller {
         Self::new(Peripherals::new(
             esp_idf_hal::peripherals::Peripherals::take()?,
         ))
+    }
+
+    pub fn spawn<F>(&mut self, fut: F)
+    where
+        F: Future<Output = ()> + 'static,
+    {
+        self.tasks.push(self.executor.spawn(fut));
     }
 }
