@@ -26,5 +26,10 @@ embassy-time.workspace = true
 
 vox-esp32-core.workspace = true
 
+rmodbus.workspace = true
+embedded-io-async.workspace = true
+edge-executor.workspace = true
+futures.workspace = true
+
 [build-dependencies]
 embuild.workspace = true
