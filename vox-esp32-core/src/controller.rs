@@ -4,7 +4,7 @@ use esp_idf_hal::gpio::{Input, PinDriver};
 use std::future::Future;
 
 use crate::esp32::Peripherals;
-use crate::esp32_led::{LEDManager, LEDManagerHandle, LED};
+use crate::esp32_led::{LEDManager, LEDManagerHandle};
 
 pub struct Controller {
     pub peripherals: Peripherals,

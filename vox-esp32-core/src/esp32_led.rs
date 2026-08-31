@@ -21,10 +21,16 @@ use ws2812_esp32_rmt_driver::{
 
 use crate::esp32::Peripherals;
 
-pub const BRIGHTNESS_DEFAULT: u8 = 12;
+pub const BRIGHTNESS_DEFAULT: u8 = 20;
 pub const BRIGHTNESS_MIN: u8 = 10;
 pub const BRIGHTNESS_MAX: u8 = 255;
 pub const BRIGHTNESS_OFF: u8 = 0;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LEDMode {
+    Hsv,
+    Rgb,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum LEDStatus {
@@ -40,26 +46,40 @@ pub enum LEDColor {
     Green,
     Purple,
     Orange,
+    Pink,
 }
 
 impl LEDColor {
     pub fn hue(&self) -> u8 {
         match self {
-            LEDColor::Orange => 21,
-            LEDColor::Green => 85,
-            LEDColor::Teal => 97,
             LEDColor::Blue => 170,
-            LEDColor::Purple => 192,
+            LEDColor::Teal => 97,
+            LEDColor::Green => 85,
+            LEDColor::Purple => 182,
+            LEDColor::Orange => 21,
+            LEDColor::Pink => 234,
+        }
+    }
+
+    pub fn rgb(&self) -> RGB8 {
+        match self {
+            LEDColor::Blue => RGB8::new(0, 0, 255),
+            LEDColor::Teal => RGB8::new(0, 150, 150),
+            LEDColor::Green => RGB8::new(0, 255, 0),
+            LEDColor::Purple => RGB8::new(90, 15, 255),
+            LEDColor::Orange => RGB8::new(255, 45, 0),
+            LEDColor::Pink => RGB8::new(255, 0, 110),
         }
     }
 }
 
 pub struct LEDDriver {
     ws2812: Arc<Mutex<LedPixelEsp32Rmt<'static, RGB8, LedPixelColorGrb24>>>,
+    mode: LEDMode,
 }
 
 impl LEDDriver {
-    fn new(peripherals: &mut Peripherals) -> Result<Self> {
+    fn new(mode: LEDMode, peripherals: &mut Peripherals) -> Result<Self> {
         let led_pin = peripherals.pins.gpio48.take().ok_or(anyhow!(
             "Controller: Failed to take LED pin, GPIO48 already taken"
         ))?;
@@ -71,12 +91,21 @@ impl LEDDriver {
         let ws2812 = Ws2812Esp32Rmt::new(rmt_channel, led_pin)?;
 
         Ok(Self {
+            mode,
             ws2812: Arc::new(Mutex::new(ws2812)),
         })
     }
 
-    fn write(&self, hue: u8, sat: u8, val: u8) -> Result<()> {
-        let pixels = [hsv2rgb(Hsv { hue, sat, val })].into_iter();
+    fn write(&self, color: LEDColor, saturation: u8, brightness: u8) -> Result<()> {
+        let pixels = match self.mode {
+            LEDMode::Hsv => [hsv2rgb(Hsv {
+                hue: color.hue(),
+                sat: saturation,
+                val: brightness,
+            })]
+            .into_iter(),
+            LEDMode::Rgb => [apply_rgb_brightness(color.rgb(), brightness)].into_iter(),
+        };
 
         let mut driver = self
             .ws2812
@@ -105,7 +134,7 @@ impl LED {
             blink_delay: Duration::from_millis(500),
             blink_state: false,
             status: LEDStatus::Off,
-            driver: Arc::new(LEDDriver::new(peripherals)?),
+            driver: Arc::new(LEDDriver::new(LEDMode::Rgb, peripherals)?),
         })
     }
 
@@ -122,7 +151,7 @@ impl LED {
             _ => self.brightness,
         };
 
-        (*self.driver).write(self.color.hue(), 255, brightness)?;
+        (*self.driver).write(self.color, 255, brightness)?;
 
         Ok(())
     }
@@ -148,10 +177,18 @@ struct LEDSetMessage {
 }
 
 #[derive(Debug)]
-enum LEDManagerMessage {
-    Set(LEDSetMessage),
+struct LEDOnceMessage {
+    color: LEDColor,
+    brightness: Option<u8>,
+    duration: Option<Duration>,
+    resume_status: Option<LEDStatus>,
 }
 
+#[derive(Debug)]
+enum LEDManagerMessage {
+    Set(LEDSetMessage),
+    Once(LEDOnceMessage),
+}
 #[derive(Clone)]
 pub struct LEDManagerHandle {
     tx: Sender<LEDManagerMessage>,
@@ -196,6 +233,25 @@ impl LEDManagerHandle {
 
     pub async fn off(&self) -> &Self {
         self.status(LEDStatus::Off).await
+    }
+
+    pub async fn once(
+        &self,
+        color: LEDColor,
+        brightness: Option<u8>,
+        duration: Option<Duration>,
+        resume_status: Option<LEDStatus>,
+    ) -> &Self {
+        let _ = self
+            .tx
+            .send(LEDManagerMessage::Once(LEDOnceMessage {
+                color,
+                brightness,
+                duration,
+                resume_status,
+            }))
+            .await;
+        self
     }
 }
 
@@ -272,6 +328,44 @@ impl LEDManager {
                     log::error!("Vox ESP32 Core: Failed to update LED: {e}")
                 }
             }
+            LEDManagerMessage::Once(msg) => {
+                let mut last_status = led.status;
+                let last_color = led.color;
+                let last_brightness = led.brightness;
+
+                if let Some(resume_status) = msg.resume_status {
+                    last_status = resume_status;
+                }
+
+                // Set temporary values
+                led.status = LEDStatus::On;
+                led.color = msg.color;
+                if let Some(brightness) = msg.brightness {
+                    led.brightness = brightness;
+                }
+
+                // Flash
+                if let Err(e) = led.update() {
+                    log::error!("Vox ESP32 Core: Failed to update LED: {e}")
+                }
+
+                Timer::after(if let Some(duration) = msg.duration {
+                    duration
+                } else {
+                    led.blink_delay
+                })
+                .await;
+
+                // Revert
+                led.status = last_status;
+                led.color = last_color;
+                led.brightness = last_brightness;
+
+                // Restore
+                if let Err(e) = led.update() {
+                    log::error!("Vox ESP32 Core: Failed to update LED: {e}")
+                }
+            }
         }
     }
 
@@ -282,4 +376,14 @@ impl LEDManager {
             }
         }
     }
+}
+
+// Utils
+
+pub fn apply_rgb_brightness(base_rgb: RGB8, brightness: u8) -> RGB8 {
+    RGB8::new(
+        ((base_rgb.r as u16 * brightness as u16) / 255) as u8,
+        ((base_rgb.g as u16 * brightness as u16) / 255) as u8,
+        ((base_rgb.b as u16 * brightness as u16) / 255) as u8,
+    )
 }
