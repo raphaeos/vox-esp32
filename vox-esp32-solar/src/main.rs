@@ -1,3 +1,5 @@
+#![no_std]
+
 use anyhow::Result;
 use embassy_time::Duration;
 use embedded_io_async::{Read, Write};

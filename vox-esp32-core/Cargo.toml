@@ -9,17 +9,25 @@ rust-version = "1.82"
 [lib]
 name = "vox_esp32_core"
 path = "src/lib.rs"
+test = false
+bench = false
+doctest = false
 
-[profile.release]
+# For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
+[profile.dev]
+# The default debug profile is too slow and too big for resource-constrained devices.
+# Always build with some optimizations enabled.
 opt-level = "s"
 
-[profile.dev]
-debug = true    # Symbols are nice, and they don't increase the size on Flash
-opt-level = "z"
+[profile.release]
+codegen-units = 1     # LLVM can perform better optimizations using a single thread
+debug = 2     # prefer slower builds but better debugging experience
+lto = 'fat'
+opt-level = 's'
 
 [features]
-default = ["esp32s3-rgb-led"]
-esp32s3-rgb-led = ["rmt-legacy", "smart-leds", "smart-leds-trait", "ws2812-esp32-rmt-driver"]
+default = []
+esp32s3-rgb-led = ["rmt-legacy", "smart-leds", "smart-leds-trait"]
 rmt-legacy = []
 timer-legacy = []
 pcnt-legacy = []
@@ -27,16 +35,18 @@ pcnt-legacy = []
 [dependencies]
 log.workspace = true
 anyhow.workspace = true
-esp-idf-svc.workspace = true
-esp-idf-hal.workspace = true
+thiserror.workspace = true
+esp-hal.workspace = true
+esp-rtos.workspace = true
+esp-bootloader-esp-idf.workspace = true
+esp-alloc.workspace = true
+embedded-hal.workspace = true
+embedded-hal-async.workspace = true
+
+embassy-executor.workspace = true
 embassy-time.workspace = true
-edge-executor.workspace = true
 futures.workspace = true
 async-channel.workspace = true
 
 smart-leds = { workspace = true, optional = true }
 smart-leds-trait = { workspace = true, optional = true }
-ws2812-esp32-rmt-driver = { workspace = true, optional = true }
-
-[build-dependencies]
-embuild.workspace = true

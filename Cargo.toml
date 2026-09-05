@@ -1,29 +1,36 @@
 [workspace]
-members = ["vox-esp32-core", "vox-esp32-blank", "vox-esp32-testing", "vox-esp32-solar"]
+#members = ["vox-esp32-core", "vox-esp32-blank", "vox-esp32-testing", "vox-esp32-solar"]
+members = ["vox-esp32-core"]
 resolver = "2"
 
 [workspace.dependencies]
 # --- Workspace ---
-vox-esp32-core = { path = "vox-esp32-core" }
+#vox-esp32-core = { path = "vox-esp32-core" }
 
 # --- Core ---
 log = "0.4"
-anyhow = "1.0"
-thiserror = "2.0"
+anyhow = { version = "1.0", default-features = false }
+thiserror = { version = "2.0", default-features = false }
 num_enum = "0.7"
 
-# --- Core ESP32 & Embedded HALs ---
-esp-idf-svc = { version = "0.52.1", features = ["critical-section", "embassy-time-driver", "embassy-sync"] }
-esp-idf-hal = "0.46.2"
-esp-idf-sys = "0.37.2"
+# --- HAL ---
+esp-hal = { version = "1.2", features = ["esp32s3", "unstable"] }
+esp-rtos = { version = "0.4.0", features = ["embassy", "esp-alloc", "esp32s3"] }
+esp-bootloader-esp-idf = { version = "0.6.0", features = ["esp32s3"] }
+esp-alloc = { version = "0.11.0", features = ["esp32s3"] }
 embedded-hal = "1.0.0"
 embedded-hal-async = "1.0.0"
-embassy-time = { version = "0.5", features = ["generic-queue-8"] }
 
-# --- Async ---
-edge-executor = "0.5"
-futures = "0.3"
-async-channel = "2.5.0"
+
+critical-section = "1.2.0"
+static_cell = "2.1.1"
+
+# --- Async / Scheduling ---
+embassy-executor = { version = "0.10", features = ["executor-interrupt", "executor-thread"] }
+embassy-time = { version = "0.5", features = ["defmt"] }
+async-channel = { version = "2.5.0", default-features = false }
+# ^ actually: default-features = false, no "std" — see note below
+futures = { version = "0.3", default-features = false, features = ["alloc"] }
 
 # --- Math & Data Parsing (No Standard Library) ---
 num-traits = { version = "0.2.19", default-features = false }
@@ -36,14 +43,10 @@ embedded-graphics = "0.8.2" # Standard engine to draw text, shapes, and UIs on s
 mipidsi = "0.10.0"           # Common SPI display driver framework (ST7789, ILI9341 screens)
 smart-leds = "0.4.0"
 smart-leds-trait = "0.3.2"
-ws2812-esp32-rmt-driver = { version = "0.14.0", features = ["smart-leds-trait"] }
 
 # --- Cryptography & Security (Off-Grid Messaging) ---
 chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] } # Fast authenticated encryption
 sha2 = { version = "0.11.0", default-features = false } # Hashing and integrity verification
-
-# --- Build Deps ---
-embuild = "0.33"
 
 # --- Sensors and modules ---
 embedded-io-async = { version = "0.7.0" }

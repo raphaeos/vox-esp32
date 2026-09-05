@@ -1,3 +1,5 @@
+#![no_std]
+
 use anyhow::Result;
 use embassy_time::Duration;
 use vox_esp32_core::esp32_led::{LEDColor, LEDStatus};

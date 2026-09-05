@@ -1,27 +1,27 @@
 use anyhow::{anyhow, Result};
-use edge_executor::{LocalExecutor, Task};
-use esp_idf_hal::gpio::{Input, PinDriver};
-use std::future::Future;
+
+use esp_hal::clock::CpuClock;
+//use esp_hal::gpio::Input;
+//use esp_hal::gpio::Pull;
+use crate::common::CoreError;
+use esp_hal::timer::timg::TimerGroup;
 
 use crate::esp32::Peripherals;
+#[cfg(feature = "esp32s3-rgb-led")]
 use crate::esp32_led::{LEDManager, LEDManagerHandle};
 
 pub struct Controller {
     pub peripherals: Peripherals,
-    pub executor: LocalExecutor<'static>,
-    pub boot_button: PinDriver<'static, Input>,
+    //pub executor: LocalExecutor<'static>,
+    // pub boot_button: PinDriver<'static, Input>,
     #[cfg(feature = "esp32s3-rgb-led")]
     pub led: LEDManagerHandle,
-    #[allow(unused)]
-    tasks: Vec<Task<()>>,
 }
 
 impl Controller {
     pub(crate) fn new(mut peripherals: Peripherals) -> Result<Self> {
-        let mut executor = LocalExecutor::new();
-        let mut tasks: Vec<Task<()>> = Vec::new();
-
-        let boot_pin = peripherals.pins.gpio0.take().ok_or(anyhow!(
+        /*
+        let boot_pin = peripherals.GPIO0.take().ok_or(anyhow!(
             "Controller: Failed to take boot pin, GPIO0 already taken"
         ))?;
         let boot_button = PinDriver::input(boot_pin, esp_idf_hal::gpio::Pull::Up)?;
@@ -31,26 +31,51 @@ impl Controller {
         #[cfg(feature = "esp32s3-rgb-led")]
         tasks.push(led_task);
 
+         */
+
         Ok(Self {
             peripherals,
-            executor,
-            boot_button,
+            //executor,
+            //boot_button,
             #[cfg(feature = "esp32s3-rgb-led")]
             led,
-            tasks,
         })
     }
 
     pub(crate) fn setup() -> Result<Self> {
-        Self::new(Peripherals::new(
-            esp_idf_hal::peripherals::Peripherals::take()?,
-        ))
+        let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
+        let mut peripherals = Peripherals::new(esp_hal::init(config));
+
+        esp_alloc::heap_allocator!(
+            #[esp_hal::ram(reclaimed)]
+            size: 72 * 1024
+        );
+
+        let timg0 = TimerGroup::new(
+            peripherals
+                .TIMG0
+                .take()
+                .ok_or(CoreError::PeripheralTaken("TIMG0"))?,
+        );
+
+        esp_rtos::start(
+            timg0.timer0,
+            peripherals
+                .FROM_CPU_INTR0
+                .take()
+                .ok_or(CoreError::PeripheralTaken("FROM_CPU_INTR0"))?,
+        );
+
+        Self::new(peripherals)
     }
 
+    /*
     pub fn spawn<F>(&mut self, fut: F)
     where
         F: Future<Output = ()> + 'static,
     {
         self.tasks.push(self.executor.spawn(fut));
     }
+
+     */
 }

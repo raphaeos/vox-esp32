@@ -1,236 +1,169 @@
-use esp_idf_hal::gpio::{
-    Gpio0, Gpio1, Gpio10, Gpio11, Gpio12, Gpio13, Gpio14, Gpio15, Gpio16, Gpio17, Gpio18, Gpio19,
-    Gpio2, Gpio20, Gpio21, Gpio26, Gpio27, Gpio28, Gpio29, Gpio3, Gpio30, Gpio31, Gpio32, Gpio33,
-    Gpio34, Gpio35, Gpio36, Gpio37, Gpio38, Gpio39, Gpio4, Gpio40, Gpio41, Gpio42, Gpio43, Gpio44,
-    Gpio45, Gpio46, Gpio47, Gpio48, Gpio5, Gpio6, Gpio7, Gpio8, Gpio9,
+use esp_hal::peripherals::{
+    ADC1, ADC2, FROM_CPU_INTR0, GPIO0, GPIO1, GPIO10, GPIO11, GPIO12, GPIO13, GPIO14, GPIO15,
+    GPIO16, GPIO17, GPIO18, GPIO19, GPIO2, GPIO20, GPIO21, GPIO26, GPIO27, GPIO28, GPIO29, GPIO3,
+    GPIO30, GPIO31, GPIO32, GPIO33, GPIO34, GPIO35, GPIO36, GPIO37, GPIO38, GPIO39, GPIO4, GPIO40,
+    GPIO41, GPIO42, GPIO43, GPIO44, GPIO45, GPIO46, GPIO47, GPIO48, GPIO5, GPIO6, GPIO7, GPIO8,
+    GPIO9, I2C0, I2C1, I2S0, I2S1, LEDC, PCNT, RMT, SPI0, SPI1, SPI2, TIMG0, TIMG1, TWAI0, UART0,
+    UART1, UART2,
 };
-#[allow(deprecated)]
-use esp_idf_hal::rmt::{
-    CHANNEL0, CHANNEL1, CHANNEL2, CHANNEL3, CHANNEL4, CHANNEL5, CHANNEL6, CHANNEL7,
-};
-use esp_idf_hal::{adc, i2c, i2s, ledc, modem, rmt, spi, task::watchdog, uart, ulp, usb_serial};
 
-pub struct Pins {
-    pub gpio0: Option<Gpio0<'static>>,
-    pub gpio1: Option<Gpio1<'static>>,
-    pub gpio2: Option<Gpio2<'static>>,
-    pub gpio3: Option<Gpio3<'static>>,
-    pub gpio4: Option<Gpio4<'static>>,
-    pub gpio5: Option<Gpio5<'static>>,
-    pub gpio6: Option<Gpio6<'static>>,
-    pub gpio7: Option<Gpio7<'static>>,
-    pub gpio8: Option<Gpio8<'static>>,
-    pub gpio9: Option<Gpio9<'static>>,
-    pub gpio10: Option<Gpio10<'static>>,
-    pub gpio11: Option<Gpio11<'static>>,
-    pub gpio12: Option<Gpio12<'static>>,
-    pub gpio13: Option<Gpio13<'static>>,
-    pub gpio14: Option<Gpio14<'static>>,
-    pub gpio15: Option<Gpio15<'static>>,
-    pub gpio16: Option<Gpio16<'static>>,
-    pub gpio17: Option<Gpio17<'static>>,
-    pub gpio18: Option<Gpio18<'static>>,
-    pub gpio19: Option<Gpio19<'static>>,
-    pub gpio20: Option<Gpio20<'static>>,
-    pub gpio21: Option<Gpio21<'static>>,
-    pub gpio26: Option<Gpio26<'static>>,
-    pub gpio27: Option<Gpio27<'static>>,
-    pub gpio28: Option<Gpio28<'static>>,
-    pub gpio29: Option<Gpio29<'static>>,
-    pub gpio30: Option<Gpio30<'static>>,
-    pub gpio31: Option<Gpio31<'static>>,
-    pub gpio32: Option<Gpio32<'static>>,
-    pub gpio33: Option<Gpio33<'static>>,
-    pub gpio34: Option<Gpio34<'static>>,
-    pub gpio35: Option<Gpio35<'static>>,
-    pub gpio36: Option<Gpio36<'static>>,
-    pub gpio37: Option<Gpio37<'static>>,
-    pub gpio38: Option<Gpio38<'static>>,
-    pub gpio39: Option<Gpio39<'static>>,
-    pub gpio40: Option<Gpio40<'static>>,
-    pub gpio41: Option<Gpio41<'static>>,
-    pub gpio42: Option<Gpio42<'static>>,
-    pub gpio43: Option<Gpio43<'static>>,
-    pub gpio44: Option<Gpio44<'static>>,
-    pub gpio45: Option<Gpio45<'static>>,
-    pub gpio46: Option<Gpio46<'static>>,
-    pub gpio47: Option<Gpio47<'static>>,
-    pub gpio48: Option<Gpio48<'static>>,
-}
-
-impl Pins {
-    pub(crate) fn new(pins: esp_idf_hal::gpio::Pins) -> Self {
-        Self {
-            gpio0: Some(pins.gpio0),
-            gpio1: Some(pins.gpio1),
-            gpio2: Some(pins.gpio2),
-            gpio3: Some(pins.gpio3),
-            gpio4: Some(pins.gpio4),
-            gpio5: Some(pins.gpio5),
-            gpio6: Some(pins.gpio6),
-            gpio7: Some(pins.gpio7),
-            gpio8: Some(pins.gpio8),
-            gpio9: Some(pins.gpio9),
-            gpio10: Some(pins.gpio10),
-            gpio11: Some(pins.gpio11),
-            gpio12: Some(pins.gpio12),
-            gpio13: Some(pins.gpio13),
-            gpio14: Some(pins.gpio14),
-            gpio15: Some(pins.gpio15),
-            gpio16: Some(pins.gpio16),
-            gpio17: Some(pins.gpio17),
-            gpio18: Some(pins.gpio18),
-            gpio19: Some(pins.gpio19),
-            gpio20: Some(pins.gpio20),
-            gpio21: Some(pins.gpio21),
-            gpio26: Some(pins.gpio26),
-            gpio27: Some(pins.gpio27),
-            gpio28: Some(pins.gpio28),
-            gpio29: Some(pins.gpio29),
-            gpio30: Some(pins.gpio30),
-            gpio31: Some(pins.gpio31),
-            gpio32: Some(pins.gpio32),
-            gpio33: Some(pins.gpio33),
-            gpio34: Some(pins.gpio34),
-            gpio35: Some(pins.gpio35),
-            gpio36: Some(pins.gpio36),
-            gpio37: Some(pins.gpio37),
-            gpio38: Some(pins.gpio38),
-            gpio39: Some(pins.gpio39),
-            gpio40: Some(pins.gpio40),
-            gpio41: Some(pins.gpio41),
-            gpio42: Some(pins.gpio42),
-            gpio43: Some(pins.gpio43),
-            gpio44: Some(pins.gpio44),
-            gpio45: Some(pins.gpio45),
-            gpio46: Some(pins.gpio46),
-            gpio47: Some(pins.gpio47),
-            gpio48: Some(pins.gpio48),
-        }
-    }
-}
-
-#[allow(deprecated)]
-pub struct RMT {
-    pub channel0: Option<CHANNEL0<'static>>,
-    pub channel1: Option<CHANNEL1<'static>>,
-    pub channel2: Option<CHANNEL2<'static>>,
-    pub channel3: Option<CHANNEL3<'static>>,
-    pub channel4: Option<CHANNEL4<'static>>,
-    pub channel5: Option<CHANNEL5<'static>>,
-    pub channel6: Option<CHANNEL6<'static>>,
-    pub channel7: Option<CHANNEL7<'static>>,
-}
-
-#[allow(deprecated)]
-impl RMT {
-    pub fn new(r: rmt::RMT) -> Self {
-        Self {
-            channel0: Some(r.channel0),
-            channel1: Some(r.channel1),
-            channel2: Some(r.channel2),
-            channel3: Some(r.channel3),
-            channel4: Some(r.channel4),
-            channel5: Some(r.channel5),
-            channel6: Some(r.channel6),
-            channel7: Some(r.channel7),
-        }
-    }
-}
-
+#[allow(non_snake_case)]
 pub struct Peripherals {
-    pub pins: Pins,
-    pub uart0: Option<uart::UART0<'static>>,
-    pub uart1: Option<uart::UART1<'static>>,
-    pub uart2: Option<uart::UART2<'static>>,
-    pub i2c0: Option<i2c::I2C0<'static>>,
-    pub i2c1: Option<i2c::I2C1<'static>>,
-    pub i2s0: Option<i2s::I2S0<'static>>,
-    pub i2s1: Option<i2s::I2S1<'static>>,
-    pub spi1: Option<spi::SPI1<'static>>,
-    pub spi2: Option<spi::SPI2<'static>>,
-    pub spi3: Option<spi::SPI3<'static>>,
-    pub adc1: Option<adc::ADC1<'static>>,
-    pub adc2: Option<adc::ADC2<'static>>,
+    pub GPIO0: Option<GPIO0<'static>>,
+    pub GPIO1: Option<GPIO1<'static>>,
+    pub GPIO2: Option<GPIO2<'static>>,
+    pub GPIO3: Option<GPIO3<'static>>,
+    pub GPIO4: Option<GPIO4<'static>>,
+    pub GPIO5: Option<GPIO5<'static>>,
+    pub GPIO6: Option<GPIO6<'static>>,
+    pub GPIO7: Option<GPIO7<'static>>,
+    pub GPIO8: Option<GPIO8<'static>>,
+    pub GPIO9: Option<GPIO9<'static>>,
+    pub GPIO10: Option<GPIO10<'static>>,
+    pub GPIO11: Option<GPIO11<'static>>,
+    pub GPIO12: Option<GPIO12<'static>>,
+    pub GPIO13: Option<GPIO13<'static>>,
+    pub GPIO14: Option<GPIO14<'static>>,
+    pub GPIO15: Option<GPIO15<'static>>,
+    pub GPIO16: Option<GPIO16<'static>>,
+    pub GPIO17: Option<GPIO17<'static>>,
+    pub GPIO18: Option<GPIO18<'static>>,
+    pub GPIO19: Option<GPIO19<'static>>,
+    pub GPIO20: Option<GPIO20<'static>>,
+    pub GPIO21: Option<GPIO21<'static>>,
+    pub GPIO26: Option<GPIO26<'static>>,
+    pub GPIO27: Option<GPIO27<'static>>,
+    pub GPIO28: Option<GPIO28<'static>>,
+    pub GPIO29: Option<GPIO29<'static>>,
+    pub GPIO30: Option<GPIO30<'static>>,
+    pub GPIO31: Option<GPIO31<'static>>,
+    pub GPIO32: Option<GPIO32<'static>>,
+    pub GPIO33: Option<GPIO33<'static>>,
+    pub GPIO34: Option<GPIO34<'static>>,
+    pub GPIO35: Option<GPIO35<'static>>,
+    pub GPIO36: Option<GPIO36<'static>>,
+    pub GPIO37: Option<GPIO37<'static>>,
+    pub GPIO38: Option<GPIO38<'static>>,
+    pub GPIO39: Option<GPIO39<'static>>,
+    pub GPIO40: Option<GPIO40<'static>>,
+    pub GPIO41: Option<GPIO41<'static>>,
+    pub GPIO42: Option<GPIO42<'static>>,
+    pub GPIO43: Option<GPIO43<'static>>,
+    pub GPIO44: Option<GPIO44<'static>>,
+    pub GPIO45: Option<GPIO45<'static>>,
+    pub GPIO46: Option<GPIO46<'static>>,
+    pub GPIO47: Option<GPIO47<'static>>,
+    pub GPIO48: Option<GPIO48<'static>>,
 
-    // Note: Kept legacy feature tags if your project relies on them
-    #[cfg(feature = "pcnt-legacy")]
-    pub pcnt0: Option<esp_idf_hal::pcnt::PCNT0<'static>>,
-    #[cfg(feature = "pcnt-legacy")]
-    pub pcnt1: Option<esp_idf_hal::pcnt::PCNT1<'static>>,
-    #[cfg(feature = "pcnt-legacy")]
-    pub pcnt2: Option<esp_idf_hal::pcnt::PCNT2<'static>>,
-    #[cfg(feature = "pcnt-legacy")]
-    pub pcnt3: Option<esp_idf_hal::pcnt::PCNT3<'static>>,
+    pub UART0: Option<UART0<'static>>,
+    pub UART1: Option<UART1<'static>>,
+    pub UART2: Option<UART2<'static>>,
 
-    pub can: Option<esp_idf_hal::can::CAN<'static>>,
-    pub ledc: Option<ledc::LEDC>,
+    pub I2C0: Option<I2C0<'static>>,
+    pub I2C1: Option<I2C1<'static>>,
 
-    #[cfg(feature = "rmt-legacy")]
-    pub rmt: RMT,
+    pub I2S0: Option<I2S0<'static>>,
+    pub I2S1: Option<I2S1<'static>>,
 
-    pub ulp: Option<ulp::ULP<'static>>,
-    pub modem: Option<modem::Modem<'static>>,
+    pub SPI0: Option<SPI0<'static>>,
+    pub SPI1: Option<SPI1<'static>>,
+    pub SPI2: Option<SPI2<'static>>,
 
-    #[cfg(feature = "timer-legacy")]
-    pub timer00: Option<esp_idf_hal::timer::TIMER00<'static>>,
-    #[cfg(feature = "timer-legacy")]
-    pub timer01: Option<esp_idf_hal::timer::TIMER01<'static>>,
-    #[cfg(feature = "timer-legacy")]
-    pub timer10: Option<esp_idf_hal::timer::TIMER10<'static>>,
-    #[cfg(feature = "timer-legacy")]
-    pub timer11: Option<esp_idf_hal::timer::TIMER11<'static>>,
+    pub LEDC: Option<LEDC<'static>>,
 
-    pub twdt: Option<watchdog::TWDT<'static>>,
-    pub usb_serial: Option<usb_serial::USB_SERIAL<'static>>,
+    pub TWAI0: Option<TWAI0<'static>>,
+
+    pub PCNT: Option<PCNT<'static>>,
+
+    pub RMT: Option<RMT<'static>>,
+
+    pub TIMG0: Option<TIMG0<'static>>,
+    pub TIMG1: Option<TIMG1<'static>>,
+
+    pub ADC1: Option<ADC1<'static>>,
+    pub ADC2: Option<ADC2<'static>>,
+
+    pub FROM_CPU_INTR0: Option<FROM_CPU_INTR0<'static>>,
 }
 
 impl Peripherals {
-    pub fn new(p: esp_idf_hal::peripherals::Peripherals) -> Self {
+    pub fn new(p: esp_hal::peripherals::Peripherals) -> Self {
         Self {
-            pins: Pins::new(p.pins),
-            uart0: Some(p.uart0),
-            uart1: Some(p.uart1),
-            uart2: Some(p.uart2),
-            i2c0: Some(p.i2c0),
-            i2c1: Some(p.i2c1),
-            i2s0: Some(p.i2s0),
-            i2s1: Some(p.i2s1),
-            spi1: Some(p.spi1),
-            spi2: Some(p.spi2),
-            spi3: Some(p.spi3),
-            adc1: Some(p.adc1),
-            adc2: Some(p.adc2),
+            GPIO0: Some(p.GPIO0),
+            GPIO1: Some(p.GPIO1),
+            GPIO2: Some(p.GPIO2),
+            GPIO3: Some(p.GPIO3),
+            GPIO4: Some(p.GPIO4),
+            GPIO5: Some(p.GPIO5),
+            GPIO6: Some(p.GPIO6),
+            GPIO7: Some(p.GPIO7),
+            GPIO8: Some(p.GPIO8),
+            GPIO9: Some(p.GPIO9),
+            GPIO10: Some(p.GPIO10),
+            GPIO11: Some(p.GPIO11),
+            GPIO12: Some(p.GPIO12),
+            GPIO13: Some(p.GPIO13),
+            GPIO14: Some(p.GPIO14),
+            GPIO15: Some(p.GPIO15),
+            GPIO16: Some(p.GPIO16),
+            GPIO17: Some(p.GPIO17),
+            GPIO18: Some(p.GPIO18),
+            GPIO19: Some(p.GPIO19),
+            GPIO20: Some(p.GPIO20),
+            GPIO21: Some(p.GPIO21),
+            GPIO26: Some(p.GPIO26),
+            GPIO27: Some(p.GPIO27),
+            GPIO28: Some(p.GPIO28),
+            GPIO29: Some(p.GPIO29),
+            GPIO30: Some(p.GPIO30),
+            GPIO31: Some(p.GPIO31),
+            GPIO32: Some(p.GPIO32),
+            GPIO33: Some(p.GPIO33),
+            GPIO34: Some(p.GPIO34),
+            GPIO35: Some(p.GPIO35),
+            GPIO36: Some(p.GPIO36),
+            GPIO37: Some(p.GPIO37),
+            GPIO38: Some(p.GPIO38),
+            GPIO39: Some(p.GPIO39),
+            GPIO40: Some(p.GPIO40),
+            GPIO41: Some(p.GPIO41),
+            GPIO42: Some(p.GPIO42),
+            GPIO43: Some(p.GPIO43),
+            GPIO44: Some(p.GPIO44),
+            GPIO45: Some(p.GPIO45),
+            GPIO46: Some(p.GPIO46),
+            GPIO47: Some(p.GPIO47),
+            GPIO48: Some(p.GPIO48),
 
-            #[cfg(feature = "pcnt-legacy")]
-            pcnt0: Some(p.pcnt0),
-            #[cfg(feature = "pcnt-legacy")]
-            pcnt1: Some(p.pcnt1),
-            #[cfg(feature = "pcnt-legacy")]
-            pcnt2: Some(p.pcnt2),
-            #[cfg(feature = "pcnt-legacy")]
-            pcnt3: Some(p.pcnt3),
+            UART0: Some(p.UART0),
+            UART1: Some(p.UART1),
+            UART2: Some(p.UART2),
 
-            can: Some(p.can),
-            ledc: Some(p.ledc),
+            I2C0: Some(p.I2C0),
+            I2C1: Some(p.I2C1),
 
-            #[cfg(feature = "rmt-legacy")]
-            rmt: RMT::new(p.rmt),
+            I2S0: Some(p.I2S0),
+            I2S1: Some(p.I2S1),
 
-            ulp: Some(p.ulp),
-            modem: Some(p.modem),
+            SPI0: Some(p.SPI0),
+            SPI1: Some(p.SPI1),
+            SPI2: Some(p.SPI2),
 
-            #[cfg(feature = "timer-legacy")]
-            timer00: Some(p.timer00),
-            #[cfg(feature = "timer-legacy")]
-            timer01: Some(p.timer01),
-            #[cfg(feature = "timer-legacy")]
-            timer10: Some(p.timer10),
-            #[cfg(feature = "timer-legacy")]
-            timer11: Some(p.timer11),
+            LEDC: Some(p.LEDC),
 
-            twdt: Some(p.twdt),
-            usb_serial: Some(p.usb_serial),
+            TWAI0: Some(p.TWAI0),
+
+            PCNT: Some(p.PCNT),
+
+            RMT: Some(p.RMT),
+
+            TIMG0: Some(p.TIMG0),
+            TIMG1: Some(p.TIMG1),
+
+            ADC1: Some(p.ADC1),
+            ADC2: Some(p.ADC2),
+
+            FROM_CPU_INTR0: Some(p.FROM_CPU_INTR0),
         }
     }
 }
