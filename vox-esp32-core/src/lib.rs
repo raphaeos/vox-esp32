@@ -1,11 +1,12 @@
+use anyhow::Result;
+
+pub use controller::Controller;
+pub use esp32::{Peripherals, Pins, RMT};
+
 pub mod controller;
 pub mod esp32;
 #[cfg(feature = "esp32s3-rgb-led")]
 pub mod esp32_led;
-
-use controller::Controller;
-
-use anyhow::Result;
 
 pub fn init() -> Result<Controller> {
     // It is necessary to call this function once. Otherwise, some patches to the runtime

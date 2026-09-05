@@ -2,8 +2,7 @@ use std::sync::Arc;
 use std::sync::Mutex;
 
 use anyhow::{anyhow, Result};
-use async_channel::Sender;
-use async_channel::{unbounded, Receiver};
+use async_channel::{bounded, Receiver, Sender};
 use edge_executor::{LocalExecutor, Task};
 use embassy_time::Duration;
 use embassy_time::Timer;
@@ -264,7 +263,7 @@ impl LEDManager {
     ) -> Result<(LEDManagerHandle, Task<()>)> {
         let mut led = LED::new(peripherals)?;
 
-        let (tx, rx) = unbounded::<LEDManagerMessage>();
+        let (tx, rx) = bounded(10);
 
         // Spawn the event loop on edge-executor
         let task = executor.spawn(async move {

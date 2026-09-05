@@ -20,16 +20,18 @@ opt-level = "z"
 [dependencies]
 log.workspace = true
 anyhow.workspace = true
+thiserror.workspace = true
 esp-idf-svc.workspace = true
 esp-idf-hal.workspace = true
 embassy-time.workspace = true
 
 vox-esp32-core.workspace = true
 
-rmodbus.workspace = true
+num_enum.workspace = true
 embedded-io-async.workspace = true
 edge-executor.workspace = true
 futures.workspace = true
+async-channel.workspace = true
 
 [build-dependencies]
 embuild.workspace = true
