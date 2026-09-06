@@ -1,24 +1,25 @@
-use std::sync::Arc;
-use std::sync::Mutex;
-
+use crate::common::CoreError;
+use crate::esp32::Peripherals;
 use anyhow::{anyhow, Result};
 use async_channel::{bounded, Receiver, Sender};
-use edge_executor::{LocalExecutor, Task};
+use embassy_executor::Spawner;
 use embassy_time::Duration;
 use embassy_time::Timer;
+use esp_hal::rmt::Rmt;
+use esp_hal::time::Rate;
+use esp_hal::Async;
+use esp_hal_smartled::color_order::Grb;
+use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, WS2812_TIMING};
 use futures::future::{self};
 use futures::pin_mut;
 use futures::select_biased;
 use futures::FutureExt;
 use smart_leds::{
     hsv::{hsv2rgb, Hsv},
-    SmartLedsWrite, RGB8,
-};
-use ws2812_esp32_rmt_driver::{
-    driver::color::LedPixelColorGrb24, LedPixelEsp32Rmt, Ws2812Esp32Rmt,
+    SmartLedsWriteAsync, RGB8,
 };
 
-use crate::esp32::Peripherals;
+const LED_COUNT: usize = 1;
 
 pub const BRIGHTNESS_DEFAULT: u8 = 20;
 pub const BRIGHTNESS_MIN: u8 = 10;
@@ -73,29 +74,37 @@ impl LEDColor {
 }
 
 pub struct LEDDriver {
-    ws2812: Arc<Mutex<LedPixelEsp32Rmt<'static, RGB8, LedPixelColorGrb24>>>,
+    ws2812: RmtSmartLeds<'static, { buffer_size::<RGB8>(LED_COUNT) }, Async, RGB8, Grb>,
     mode: LEDMode,
 }
 
 impl LEDDriver {
     fn new(mode: LEDMode, peripherals: &mut Peripherals) -> Result<Self> {
-        let led_pin = peripherals.pins.gpio48.take().ok_or(anyhow!(
-            "Controller: Failed to take LED pin, GPIO48 already taken"
-        ))?;
-        #[allow(deprecated)]
-        let rmt_channel = peripherals.rmt.channel0.take().ok_or(anyhow!(
-            "Controller: Failed to take RMT Channel, channel0 already taken"
-        ))?;
+        let led_pin = peripherals
+            .GPIO48
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO48"))?;
 
-        let ws2812 = Ws2812Esp32Rmt::new(rmt_channel, led_pin)?;
+        let rmt = Rmt::new(
+            peripherals
+                .RMT
+                .take()
+                .ok_or(CoreError::PeripheralTaken("RMT"))?,
+            Rate::from_mhz(80),
+        )?
+        .into_async();
 
-        Ok(Self {
-            mode,
-            ws2812: Arc::new(Mutex::new(ws2812)),
-        })
+        let ws2812 =
+            RmtSmartLeds::<{ buffer_size::<RGB8>(LED_COUNT) }, _, RGB8, color_order::Grb>::new(
+                WS2812_TIMING,
+                rmt.channel0,
+                led_pin,
+            )?;
+
+        Ok(Self { mode, ws2812 })
     }
 
-    fn write(&self, color: LEDColor, saturation: u8, brightness: u8) -> Result<()> {
+    async fn write(&mut self, color: LEDColor, saturation: u8, brightness: u8) -> Result<()> {
         let pixels = match self.mode {
             LEDMode::Hsv => [hsv2rgb(Hsv {
                 hue: color.hue(),
@@ -106,11 +115,10 @@ impl LEDDriver {
             LEDMode::Rgb => [apply_rgb_brightness(color.rgb(), brightness)].into_iter(),
         };
 
-        let mut driver = self
-            .ws2812
-            .lock()
-            .map_err(|e| anyhow!("Failed to lock LED driver for Off state: {:?}", e))?;
-        driver.write(pixels)?;
+        self.ws2812
+            .write(pixels)
+            .await
+            .map_err(|e| anyhow!("Failed to write RGB LED: {:?}", e))?;
 
         Ok(())
     }
@@ -122,7 +130,7 @@ pub struct LED {
     status: LEDStatus,
     blink_delay: Duration,
     blink_state: bool,
-    driver: Arc<LEDDriver>,
+    driver: LEDDriver,
 }
 
 impl LED {
@@ -133,11 +141,11 @@ impl LED {
             blink_delay: Duration::from_millis(500),
             blink_state: false,
             status: LEDStatus::Off,
-            driver: Arc::new(LEDDriver::new(LEDMode::Rgb, peripherals)?),
+            driver: LEDDriver::new(LEDMode::Rgb, peripherals)?,
         })
     }
 
-    fn update(&mut self) -> Result<()> {
+    async fn update(&mut self) -> Result<()> {
         let brightness = match self.status {
             LEDStatus::Off => BRIGHTNESS_OFF,
             LEDStatus::Blink => {
@@ -150,15 +158,13 @@ impl LED {
             _ => self.brightness,
         };
 
-        (*self.driver).write(self.color, 255, brightness)?;
-
-        Ok(())
+        self.driver.write(self.color, 255, brightness).await
     }
 
-    fn toggle_blink(&mut self) -> Result<()> {
+    async fn toggle_blink(&mut self) -> Result<()> {
         if self.status == LEDStatus::Blink {
             self.blink_state = !self.blink_state;
-            self.update()
+            self.update().await
         } else {
             Err(anyhow!(
                 "toggle_blink called when status != LEDStatus::Blink"
@@ -254,28 +260,32 @@ impl LEDManagerHandle {
     }
 }
 
+#[embassy_executor::task]
+async fn led_task(mgr: LEDManager, rx: Receiver<LEDManagerMessage>, led: LED) {
+    mgr.run(rx, led).await;
+}
+
 pub struct LEDManager;
 
 impl LEDManager {
     pub(crate) fn spawn(
-        executor: &mut LocalExecutor<'static>,
+        spawner: &Spawner,
         peripherals: &mut Peripherals,
-    ) -> Result<(LEDManagerHandle, Task<()>)> {
-        let mut led = LED::new(peripherals)?;
+    ) -> Result<LEDManagerHandle> {
+        let mgr = LEDManager {};
+        let led = LED::new(peripherals)?;
 
         let (tx, rx) = bounded(10);
 
         // Spawn the event loop on edge-executor
-        let task = executor.spawn(async move {
-            log::info!("Vox ESP32 Core: LED Manager started");
+        spawner.spawn(led_task(mgr, rx, led)?);
 
-            Self::run(rx, &mut led).await
-        });
-
-        Ok((LEDManagerHandle { tx }, task))
+        Ok(LEDManagerHandle { tx })
     }
 
-    async fn run(rx: Receiver<LEDManagerMessage>, led: &mut LED) {
+    async fn run(&self, rx: Receiver<LEDManagerMessage>, mut led: LED) {
+        log::info!("Vox ESP32 Core: LED Manager started");
+
         loop {
             let recv_fut = rx.recv().fuse();
 
@@ -292,7 +302,7 @@ impl LEDManager {
                 msg_res = recv_fut => {
                     match msg_res {
                         Ok(msg) => {
-                            Self::process_msg(msg, led).await;
+                            self.process_msg(msg, &mut led).await;
                         }
                         Err(_) => {
                             // Channel was closed, exit the loop safely
@@ -301,13 +311,13 @@ impl LEDManager {
                     }
                 },
                 _ = timeout_fut => {
-                    Self::process_timeout(led).await;
+                    self.process_timeout(&mut led).await;
                 }
             }
         }
     }
 
-    async fn process_msg(msg: LEDManagerMessage, led: &mut LED) {
+    async fn process_msg(&self, msg: LEDManagerMessage, led: &mut LED) {
         match msg {
             LEDManagerMessage::Set(msg) => {
                 if let Some(color) = msg.color {
@@ -323,7 +333,7 @@ impl LEDManager {
                     led.blink_delay = blink_delay;
                 }
 
-                if let Err(e) = led.update() {
+                if let Err(e) = led.update().await {
                     log::error!("Vox ESP32 Core: Failed to update LED: {e}")
                 }
             }
@@ -344,7 +354,7 @@ impl LEDManager {
                 }
 
                 // Flash
-                if let Err(e) = led.update() {
+                if let Err(e) = led.update().await {
                     log::error!("Vox ESP32 Core: Failed to update LED: {e}")
                 }
 
@@ -361,16 +371,16 @@ impl LEDManager {
                 led.brightness = last_brightness;
 
                 // Restore
-                if let Err(e) = led.update() {
+                if let Err(e) = led.update().await {
                     log::error!("Vox ESP32 Core: Failed to update LED: {e}")
                 }
             }
         }
     }
 
-    async fn process_timeout(led: &mut LED) {
+    async fn process_timeout(&self, led: &mut LED) {
         if led.status == LEDStatus::Blink {
-            if let Err(e) = led.toggle_blink() {
+            if let Err(e) = led.toggle_blink().await {
                 log::error!("Vox ESP32 Core: Failed to toggle LED blink: {e}")
             }
         }

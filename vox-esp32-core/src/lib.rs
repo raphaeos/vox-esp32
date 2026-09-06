@@ -7,19 +7,36 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
-use anyhow::Result;
-
-pub use controller::Controller;
-pub use esp32::Peripherals;
-
 pub mod common;
 pub mod controller;
 pub mod esp32;
 #[cfg(feature = "esp32s3-rgb-led")]
 pub mod esp32_led;
 
-pub fn init() -> Result<Controller> {
+pub use controller::Controller;
+pub use esp32::Peripherals;
+
+use anyhow::Result;
+use core::panic::PanicInfo;
+use embassy_executor::Spawner;
+use embedded_hal::delay::DelayNs;
+use esp_hal::{delay::Delay, system::software_reset};
+
+#[panic_handler]
+fn panic(info: &PanicInfo) -> ! {
+    esp_println::println!("PANIC: {info}");
+    esp_println::println!("Restarting in 10 seconds...");
+
+    let mut delay = Delay::new();
+    delay.delay_ms(10_000);
+
+    software_reset();
+}
+
+pub fn init(spawner: Spawner) -> Result<Controller> {
+    esp_println::logger::init_logger_from_env();
+
     log::info!("Vox ESP32 Core: Initializing");
 
-    Controller::setup()
+    Controller::setup(spawner)
 }

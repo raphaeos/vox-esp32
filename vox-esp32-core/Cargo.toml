@@ -26,7 +26,7 @@ lto = 'fat'
 opt-level = 's'
 
 [features]
-default = []
+default = ["esp32s3-rgb-led"]
 esp32s3-rgb-led = ["rmt-legacy", "smart-leds", "smart-leds-trait"]
 rmt-legacy = []
 timer-legacy = []
@@ -37,9 +37,11 @@ log.workspace = true
 anyhow.workspace = true
 thiserror.workspace = true
 esp-hal.workspace = true
+esp-hal-smartled2.workspace = true
 esp-rtos.workspace = true
 esp-bootloader-esp-idf.workspace = true
 esp-alloc.workspace = true
+esp-println.workspace = true
 embedded-hal.workspace = true
 embedded-hal-async.workspace = true
 

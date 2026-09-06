@@ -1,48 +1,50 @@
-use anyhow::{anyhow, Result};
-
-use esp_hal::clock::CpuClock;
-//use esp_hal::gpio::Input;
-//use esp_hal::gpio::Pull;
 use crate::common::CoreError;
+use anyhow::Result;
+use embassy_executor::{SpawnToken, Spawner};
+use esp_hal::clock::CpuClock;
+use esp_hal::gpio;
+use esp_hal::gpio::InputConfig;
 use esp_hal::timer::timg::TimerGroup;
 
 use crate::esp32::Peripherals;
 #[cfg(feature = "esp32s3-rgb-led")]
 use crate::esp32_led::{LEDManager, LEDManagerHandle};
 
+extern crate alloc;
+
 pub struct Controller {
+    spawner: Spawner,
     pub peripherals: Peripherals,
-    //pub executor: LocalExecutor<'static>,
-    // pub boot_button: PinDriver<'static, Input>,
+    pub boot_button: gpio::Input<'static>,
     #[cfg(feature = "esp32s3-rgb-led")]
     pub led: LEDManagerHandle,
 }
 
 impl Controller {
-    pub(crate) fn new(mut peripherals: Peripherals) -> Result<Self> {
-        /*
-        let boot_pin = peripherals.GPIO0.take().ok_or(anyhow!(
-            "Controller: Failed to take boot pin, GPIO0 already taken"
-        ))?;
-        let boot_button = PinDriver::input(boot_pin, esp_idf_hal::gpio::Pull::Up)?;
+    pub(crate) fn new(spawner: Spawner, mut peripherals: Peripherals) -> Result<Self> {
+        let boot_config = InputConfig::default().with_pull(gpio::Pull::Up);
+
+        let boot_button = gpio::Input::new(
+            peripherals
+                .GPIO0
+                .take()
+                .ok_or(CoreError::PeripheralTaken("GPIO0"))?,
+            boot_config,
+        );
 
         #[cfg(feature = "esp32s3-rgb-led")]
-        let (led, led_task) = LEDManager::spawn(&mut executor, &mut peripherals)?;
-        #[cfg(feature = "esp32s3-rgb-led")]
-        tasks.push(led_task);
-
-         */
+        let led = LEDManager::spawn(&spawner, &mut peripherals)?;
 
         Ok(Self {
+            spawner,
             peripherals,
-            //executor,
-            //boot_button,
+            boot_button,
             #[cfg(feature = "esp32s3-rgb-led")]
             led,
         })
     }
 
-    pub(crate) fn setup() -> Result<Self> {
+    pub(crate) fn setup(spawner: Spawner) -> Result<Self> {
         let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
         let mut peripherals = Peripherals::new(esp_hal::init(config));
 
@@ -66,16 +68,10 @@ impl Controller {
                 .ok_or(CoreError::PeripheralTaken("FROM_CPU_INTR0"))?,
         );
 
-        Self::new(peripherals)
+        Self::new(spawner, peripherals)
     }
 
-    /*
-    pub fn spawn<F>(&mut self, fut: F)
-    where
-        F: Future<Output = ()> + 'static,
-    {
-        self.tasks.push(self.executor.spawn(fut));
+    pub fn spawn<S>(&self, token: SpawnToken<S>) {
+        self.spawner.spawn(token);
     }
-
-     */
 }

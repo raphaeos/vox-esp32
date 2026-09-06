@@ -24,9 +24,12 @@ opt-level = 's'
 
 [dependencies]
 log.workspace = true
+thiserror.workspace = true
 anyhow.workspace = true
-esp-idf-svc.workspace = true
-esp-idf-hal.workspace = true
+esp-hal.workspace = true
+esp-rtos.workspace = true
+esp-bootloader-esp-idf.workspace = true
 embassy-time.workspace = true
+embassy-executor.workspace = true
 
 vox-esp32-core.workspace = true
