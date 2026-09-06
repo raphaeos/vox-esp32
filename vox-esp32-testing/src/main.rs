@@ -30,6 +30,8 @@ async fn main(spawner: Spawner) -> ! {
         .set(Some(LEDColor::Purple), Some(LEDStatus::Blink), None, None)
         .await;
 
+    log::info!("Started test ...");
+
     let mut col_i = 0;
     let colors: [LEDColor; 6] = [
         LEDColor::Blue,

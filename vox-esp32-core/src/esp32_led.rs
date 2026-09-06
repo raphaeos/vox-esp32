@@ -8,16 +8,13 @@ use embassy_time::Timer;
 use esp_hal::rmt::Rmt;
 use esp_hal::time::Rate;
 use esp_hal::Async;
-use esp_hal_smartled::color_order::Grb;
-use esp_hal_smartled::{buffer_size, color_order, RmtSmartLeds, WS2812_TIMING};
+use esp_hal_smartled::{buffer_size, color_order::Grb, RmtSmartLeds, WS2812_TIMING};
 use futures::future::{self};
 use futures::pin_mut;
 use futures::select_biased;
 use futures::FutureExt;
-use smart_leds::{
-    hsv::{hsv2rgb, Hsv},
-    SmartLedsWriteAsync, RGB8,
-};
+use smart_leds::hsv::{hsv2rgb, Hsv};
+use smart_leds::{SmartLedsWriteAsync, RGB8};
 
 const LED_COUNT: usize = 1;
 
@@ -94,12 +91,12 @@ impl LEDDriver {
         )?
         .into_async();
 
-        let ws2812 =
-            RmtSmartLeds::<{ buffer_size::<RGB8>(LED_COUNT) }, _, RGB8, color_order::Grb>::new(
-                WS2812_TIMING,
-                rmt.channel0,
-                led_pin,
-            )?;
+        let ws2812 = RmtSmartLeds::<{ buffer_size::<RGB8>(LED_COUNT) }, _, RGB8, Grb>::new(
+            WS2812_TIMING,
+            rmt.channel0,
+            led_pin,
+            Rate::from_mhz(80),
+        )?;
 
         Ok(Self { mode, ws2812 })
     }
