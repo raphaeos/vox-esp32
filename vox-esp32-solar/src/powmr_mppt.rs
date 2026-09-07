@@ -1,16 +1,19 @@
-use std::fmt::{Display, Formatter};
-
+use alloc::format;
+use alloc::string::String;
 use anyhow::Result;
 use async_channel::{bounded, Receiver, Sender};
+use core::fmt::{Display, Formatter};
 use embassy_time::Duration;
-use esp_idf_hal::gpio;
-use esp_idf_hal::sys::EspError;
-use esp_idf_hal::uart::*;
-use esp_idf_hal::units::Hertz;
+use esp_hal::uart::RxError;
+use esp_hal::{
+    time::Rate,
+    uart::{Config, Uart},
+    Async,
+};
 use num_enum::TryFromPrimitive;
 use thiserror::Error;
-
-use vox_esp32_core::esp32_led::LEDManagerHandle;
+use vox_esp32_core::common::CoreError;
+use vox_esp32_core::esp32_led::{LEDManager, LEDManagerHandle, LED};
 use vox_esp32_core::Controller;
 
 const MPPT_FRAME_TYPE_USE: u8 = 0x0d;
@@ -20,7 +23,7 @@ pub enum MPPTError {
     #[error("Timed-out waiting for heartbeat from MPPT parallel communications")]
     TimeOut,
     #[error("Read error: {0}")]
-    ReadError(#[from] EspError),
+    ReadError(#[from] RxError),
     #[error("Non-sync frame from MPPT parallel communications")]
     NonSyncFrame,
     #[error("CRC Miss-match in MPPT parallel communications")]
@@ -111,7 +114,7 @@ impl MPPTUserConfig {
 }
 
 impl Display for MPPTUserConfig {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         write!(f, "MPPTUserConfig[boost_voltage: {:.1} V, float_voltage: {:.1} V, uv_cutoff: {:.1} V, uv_recovery: {:.1} V, calibration_voltage: {:.1} V, max_current: {:.1} A]",
                self.boost_voltage(), self.float_voltage(), self.uv_cutoff(), self.uv_recovery(), self.calibration_voltage(), self.max_current())
     }
@@ -135,7 +138,7 @@ impl MPPTState {
 }
 
 impl Display for MPPTState {
-    fn fmt(&self, f: &mut Formatter<'_>) -> std::fmt::Result {
+    fn fmt(&self, f: &mut Formatter<'_>) -> core::fmt::Result {
         if let Some(user_config) = self.user_config.as_ref() {
             write!(f, "MPPTState[master_id: {}, battery_voltage: {:.1} V, SOC: {} %, battery_type: {}, user_config: Some({})]",
                    self.master_id, self.battery_voltage(), self.soc(), self.battery_type.name(), user_config)
@@ -146,48 +149,62 @@ impl Display for MPPTState {
     }
 }
 
-pub struct MPPTManager;
+#[embassy_executor::task]
+async fn mppt_task(mut mgr: MPPTManager) {
+    mgr.run().await;
+}
+
+pub struct MPPTManager {
+    uart: Uart<'static, Async>,
+    tx: Sender<MPPTResult<MPPTState>>,
+    led: LEDManagerHandle,
+}
 
 impl MPPTManager {
     pub(crate) fn spawn(controller: &mut Controller) -> Result<Receiver<MPPTResult<MPPTState>>> {
-        let config = config::Config::new().baudrate(Hertz(9600));
+        let config = Config::default().with_baudrate(9600);
 
-        // Parallel comm bus — this unit has NO Modbus port, so we only listen (RX).
-        let mut uart = AsyncUartDriver::new(
-            controller.peripherals.uart1.take().unwrap(),
-            controller.peripherals.pins.gpio17.take().unwrap(), // TX (unused)
-            controller.peripherals.pins.gpio18.take().unwrap(), // RX
-            Option::<gpio::Gpio0>::None,
-            Option::<gpio::Gpio0>::None,
-            &config,
-        )?;
+        let mut uart = Uart::new(
+            controller
+                .peripherals
+                .UART1
+                .take()
+                .ok_or(CoreError::PeripheralTaken("UART1"))?,
+            config,
+        )?
+        .with_rx(
+            controller
+                .peripherals
+                .GPIO18
+                .take()
+                .ok_or(CoreError::PeripheralTaken("GPIO18"))?,
+        )
+        .into_async();
 
         let (tx, rx) = bounded(10);
 
         let led = controller.led.clone();
 
-        // Spawn the event loop on edge-executor
-        controller.spawn(async move {
-            log::info!("Vox ESP32 Solar: PowMr MPPT Manager started");
+        let mgr = MPPTManager { uart, tx, led };
 
-            Self::run(tx, &mut uart, led).await
-        });
+        controller.spawn(mppt_task(mgr)?);
 
         Ok(rx)
     }
 
-    async fn run(
-        tx: Sender<MPPTResult<MPPTState>>,
-        uart: &mut AsyncUartDriver<'static, UartDriver<'static>>,
-        led: LEDManagerHandle,
-    ) {
+    async fn run(&mut self) {
+        log::info!("Vox ESP32 Solar: PowMr MPPT Manager started");
+
         loop {
             log::debug!("MPPTManager: Waiting for parallel communications ...");
 
             let mut buf = [0u8; 64];
 
-            match embassy_time::with_timeout(Duration::from_millis(20000), uart.read(&mut buf))
-                .await
+            match embassy_time::with_timeout(
+                Duration::from_millis(20000),
+                self.uart.read_async(&mut buf),
+            )
+            .await
             {
                 Ok(Ok(total_read)) => {
                     log::debug!("MPPTManager: ... Read OK, read={}", total_read);
@@ -203,7 +220,7 @@ impl MPPTManager {
                                 .collect::<String>()
                         );
 
-                        let _ = tx.send(Err(MPPTError::NonSyncFrame)).await;
+                        let _ = self.tx.send(Err(MPPTError::NonSyncFrame)).await;
 
                         embassy_time::Timer::after(Duration::from_millis(3000)).await;
                         continue;
@@ -242,7 +259,7 @@ impl MPPTManager {
                             crc_rx
                         );
 
-                        let _ = tx.send(Err(MPPTError::CrcMissMatch)).await;
+                        let _ = self.tx.send(Err(MPPTError::CrcMissMatch)).await;
 
                         continue;
                     }
@@ -258,7 +275,8 @@ impl MPPTManager {
                                     ((data[17] as u16) << 8) | data[18] as u16;
                                 let max_current = ((data[19] as u16) << 8) | data[20] as u16;
 
-                                let _ = tx
+                                let _ = self
+                                    .tx
                                     .send(Ok(MPPTState {
                                         master_id,
                                         battery_voltage,
@@ -274,7 +292,8 @@ impl MPPTManager {
                                     }))
                                     .await;
                             } else {
-                                let _ = tx
+                                let _ = self
+                                    .tx
                                     .send(Ok(MPPTState {
                                         master_id,
                                         battery_voltage,
@@ -287,7 +306,8 @@ impl MPPTManager {
                         Err(_e) => {
                             log::warn!("MPPTManager: Unknown battery type idx: {}", batt_idx);
 
-                            let _ = tx
+                            let _ = self
+                                .tx
                                 .send(Err(MPPTError::UnknownBatteryTypeIdx(batt_idx)))
                                 .await;
                         }
@@ -296,12 +316,12 @@ impl MPPTManager {
                 Ok(Err(err)) => {
                     log::warn!("MPPTManager: Read error: {:?}", err);
 
-                    let _ = tx.send(Err(MPPTError::ReadError(err))).await;
+                    let _ = self.tx.send(Err(MPPTError::ReadError(err))).await;
                 }
                 Err(_err) => {
                     log::warn!("MPPTManager: Timed out waiting for parallel communications");
 
-                    let _ = tx.send(Err(MPPTError::TimeOut)).await;
+                    let _ = self.tx.send(Err(MPPTError::TimeOut)).await;
                 }
             }
         }

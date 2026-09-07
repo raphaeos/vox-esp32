@@ -24,16 +24,19 @@ opt-level = 's'
 
 [dependencies]
 log.workspace = true
-anyhow.workspace = true
 thiserror.workspace = true
-esp-idf-svc.workspace = true
-esp-idf-hal.workspace = true
+anyhow.workspace = true
+esp-hal.workspace = true
+esp-rtos.workspace = true
+esp-bootloader-esp-idf.workspace = true
+esp-println.workspace = true
 embassy-time.workspace = true
+embassy-executor.workspace = true
 
-vox-esp32-core.workspace = true
+vox-esp32-core = { workspace = true, features = ["esp32s3-adc"] }
 
 num_enum.workspace = true
 embedded-io-async.workspace = true
-edge-executor.workspace = true
 futures.workspace = true
 async-channel.workspace = true
+nb.workspace = true

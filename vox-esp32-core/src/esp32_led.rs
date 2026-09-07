@@ -274,7 +274,6 @@ impl LEDManager {
 
         let (tx, rx) = bounded(10);
 
-        // Spawn the event loop on edge-executor
         spawner.spawn(led_task(mgr, rx, led)?);
 
         Ok(LEDManagerHandle { tx })

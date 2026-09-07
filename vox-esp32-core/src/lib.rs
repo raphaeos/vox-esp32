@@ -10,6 +10,7 @@
 pub mod common;
 pub mod controller;
 pub mod esp32;
+pub mod esp32_adc;
 #[cfg(feature = "esp32s3-rgb-led")]
 pub mod esp32_led;
 

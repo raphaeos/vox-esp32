@@ -28,6 +28,7 @@ opt-level = 's'
 [features]
 default = ["esp32s3-rgb-led"]
 esp32s3-rgb-led = ["rmt-legacy", "smart-leds", "smart-leds-trait"]
+esp32s3-adc = []
 rmt-legacy = []
 timer-legacy = []
 pcnt-legacy = []

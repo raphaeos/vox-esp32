@@ -1,6 +1,5 @@
 [workspace]
-#members = ["vox-esp32-core", "vox-esp32-blank", "vox-esp32-testing", "vox-esp32-solar"]
-members = ["vox-esp32-core", "vox-esp32-blank", "vox-esp32-testing", ]
+members = ["vox-esp32-core", "vox-esp32-blank", "vox-esp32-testing", "vox-esp32-solar"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -11,7 +10,7 @@ vox-esp32-core = { path = "vox-esp32-core" }
 log = "0.4"
 anyhow = { version = "1.0", default-features = false }
 thiserror = { version = "2.0", default-features = false }
-num_enum = "0.7"
+num_enum = { version = "0.7", default-features = false }
 
 # --- HAL ---
 esp-hal = { version = "1.2", features = ["esp32s3", "unstable"] }
@@ -30,8 +29,8 @@ static_cell = "2.1.1"
 embassy-executor = { version = "0.10", features = ["executor-interrupt", "executor-thread"] }
 embassy-time = { version = "0.5", features = ["defmt"] }
 async-channel = { version = "2.5.0", default-features = false }
-# ^ actually: default-features = false, no "std" — see note below
 futures = { version = "0.3", default-features = false, features = ["alloc", "async-await"] }
+nb = "1.1.0"
 
 # --- Math & Data Parsing (No Standard Library) ---
 num-traits = { version = "0.2.19", default-features = false }

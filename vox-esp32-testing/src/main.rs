@@ -6,10 +6,13 @@
     holding buffers for the duration of a data transfer."
 )]
 #![deny(clippy::large_stack_frames)]
+
+pub mod test_adc_voltage;
+pub mod test_leds;
+
 extern crate alloc;
 
 use embassy_executor::Spawner;
-use embassy_time::{Duration, Timer};
 use vox_esp32_core::esp32_led::{LEDColor, LEDStatus};
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -30,46 +33,8 @@ async fn main(spawner: Spawner) -> ! {
         .set(Some(LEDColor::Purple), Some(LEDStatus::Blink), None, None)
         .await;
 
-    log::info!("Started test ...");
+    log::info!("Vox ESP32 Testing: Started");
 
-    let mut col_i = 0;
-    let colors: [LEDColor; 6] = [
-        LEDColor::Blue,
-        LEDColor::Teal,
-        LEDColor::Green,
-        LEDColor::Purple,
-        LEDColor::Orange,
-        LEDColor::Pink,
-    ];
-
-    loop {
-        controller.boot_button.wait_for_falling_edge().await;
-
-        if col_i >= colors.len() {
-            col_i = 0;
-        }
-
-        let selected_color = colors[col_i];
-
-        log::info!("Selected: {:?}", selected_color);
-
-        controller
-            .led
-            .set(Some(selected_color), None, None, None)
-            .await;
-
-        controller
-            .led
-            .once(
-                selected_color,
-                Some(255),
-                Some(Duration::from_millis(1000)),
-                None,
-            )
-            .await;
-
-        col_i += 1;
-
-        Timer::after(Duration::from_millis(200)).await;
-    }
+    //test_leds::run(&mut controller).await;
+    test_adc_voltage::run(&mut controller).await;
 }
