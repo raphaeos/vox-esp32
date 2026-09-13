@@ -331,41 +331,29 @@ impl MPPTManager {
 /// Utils
 
 pub fn battery_voltage_soc(voltage: f32) -> u8 {
-    if voltage >= 14.2 {
+    if voltage >= 13.6 {
         100
-    }
-    // Full charge (3.55V/cell)
-    else if voltage >= 14.0 {
+    } else if voltage >= 13.4 {
+        99
+    } else if voltage >= 13.3 {
         90
-    }
-    // Top of bulk
-    else if voltage >= 13.6 {
-        75
-    }
-    // Entering flat zone
-    else if voltage >= 13.2 {
+    } else if voltage >= 13.2 {
+        70
+    } else if voltage >= 13.1 {
         50
-    }
-    // Middle of flat zone
-    else if voltage >= 12.8 {
-        25
-    }
-    // Lower flat zone
-    else if voltage >= 12.4 {
-        10
-    }
-    // Leaving flat zone
-    else if voltage >= 12.0 {
-        5
-    }
-    // Steep drop begins
-    else if voltage >= 11.0 {
-        1
-    }
-    // Barely hanging on
-    else {
+    } else if voltage >= 13.0 {
+        40
+    } else if voltage >= 12.9 {
+        30
+    } else if voltage >= 12.8 {
+        20
+    } else if voltage >= 12.5 {
+        14
+    } else if voltage >= 12.0 {
+        9
+    } else {
         0
-    } // BMS cut-off imminent
+    }
 }
 
 // CRC-16/MODBUS (poly 0xA001 reflected, init 0xFFFF).

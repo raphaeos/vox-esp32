@@ -50,3 +50,4 @@ sha2 = { version = "0.11.0", default-features = false } # Hashing and integrity 
 
 # --- Sensors and modules ---
 embedded-io-async = { version = "0.7.0" }
+embedded-ads111x = { version = "0.1.3", features = ["async"] }

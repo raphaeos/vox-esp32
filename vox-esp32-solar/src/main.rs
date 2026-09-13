@@ -8,6 +8,7 @@
 #![deny(clippy::large_stack_frames)]
 extern crate alloc;
 
+use crate::powmr_mppt::MPPTManager;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::analog::adc::{AdcCalScheme, AdcHasCurveCal};
@@ -36,7 +37,7 @@ async fn main(spawner: Spawner) -> ! {
     let mut controller =
         vox_esp32_core::init(spawner).expect("failed to initialize ESP controller");
 
-    //let mppt_rx = MPPTManager::spawn(&mut controller)?;
+    let mppt_rx = MPPTManager::spawn(&mut controller).expect("failed to spawn MPPTManager");
 
     controller
         .led
@@ -44,6 +45,14 @@ async fn main(spawner: Spawner) -> ! {
         .await;
 
     loop {
+        match mppt_rx.recv().await {
+            Ok(Ok(state)) => {
+                log::info!("mppt state: {}", state);
+            }
+            Ok(Err(err)) => log::error!("mppt state error: {}", err),
+            Err(e) => log::error!("mppt recv error: {}", e),
+        }
+
         Timer::after(Duration::from_millis(1000)).await;
     }
 }

@@ -32,5 +32,6 @@ esp-bootloader-esp-idf.workspace = true
 esp-println.workspace = true
 embassy-time.workspace = true
 embassy-executor.workspace = true
+embedded-ads111x.workspace = true
 
 vox-esp32-core.workspace = true

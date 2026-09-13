@@ -8,6 +8,7 @@
 #![deny(clippy::large_stack_frames)]
 
 pub mod test_adc_voltage;
+pub mod test_ads1115;
 pub mod test_leds;
 
 extern crate alloc;
@@ -36,5 +37,6 @@ async fn main(spawner: Spawner) -> ! {
     log::info!("Vox ESP32 Testing: Started");
 
     //test_leds::run(&mut controller).await;
-    test_adc_voltage::run(&mut controller).await;
+    //test_adc_voltage::run(&mut controller).await;
+    test_ads1115::run(&mut controller).await;
 }
