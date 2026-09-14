@@ -6,10 +6,14 @@
     holding buffers for the duration of a data transfer."
 )]
 #![deny(clippy::large_stack_frames)]
+extern crate alloc;
 
+#[cfg(feature = "ads111x")]
+pub mod ads111x;
 pub mod common;
 pub mod controller;
 pub mod esp32;
+#[cfg(feature = "esp32s3-adc")]
 pub mod esp32_adc;
 #[cfg(feature = "esp32s3-rgb-led")]
 pub mod esp32_led;

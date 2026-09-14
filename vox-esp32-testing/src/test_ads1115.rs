@@ -1,70 +1,83 @@
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use embassy_time::{Duration, Timer};
 use embedded_ads111x::{ADS111x, ADS111xConfig, InputMultiplexer};
 use esp_hal::{
-    gpio::Io,
     i2c::master::{Config, I2c},
     peripherals::Peripherals,
 };
+use strum::IntoEnumIterator; // 1. Import the trait
+use strum_macros::EnumIter;
+use vox_esp32_core::ads111x::{ADSVoltageProbe, Address};
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::esp32_adc::Esp32VoltageProbe;
-use vox_esp32_core::Controller;
+use vox_esp32_core::Controller; // 2. Import the derive macro
 
 const VOLTAGE_DIVIDER_R1: f32 = 181400.0;
 const VOLTAGE_DIVIDER_R1_WIRE: f32 = 0.65;
 const VOLTAGE_DIVIDER_R2: f32 = 6038.0;
 
-pub async fn run(controller: &mut Controller) -> ! {
+#[derive(Copy, Clone, PartialOrd, PartialEq, Ord, Eq, Debug, EnumIter)]
+enum TestProbeId {
+    SolarPv1,
+    SolarPv2,
+    SolarPv3,
+}
+
+pub async fn run(controller: &mut Controller) -> Result<()> {
     log::info!("Started ADS1115 Voltage test ...");
 
-    let sda = (&mut controller.peripherals.GPIO5).take().unwrap();
-    let scl = (&mut controller.peripherals.GPIO4).take().unwrap();
+    let sda = (&mut controller.peripherals.GPIO5)
+        .take()
+        .ok_or(CoreError::PeripheralTaken("GPIO5"))?;
+    let scl = (&mut controller.peripherals.GPIO4)
+        .take()
+        .ok_or(CoreError::PeripheralTaken("GPIO4"))?;
 
-    let i2c_bus = I2c::new(
-        (&mut controller.peripherals.I2C0).take().unwrap(),
-        Config::default(),
-    )
-    .unwrap()
-    .with_sda(sda)
-    .with_scl(scl)
-    .into_async();
-
-    // Configure the ADC directly using its modern config builder pattern
-    let config = ADS111xConfig::default()
-        .mux(InputMultiplexer::AIN0GND)
-        .pga(embedded_ads111x::ProgramableGainAmplifier::V4_096);
-
-    let mut adc = ADS111x::new(i2c_bus, 0x48u8, config).unwrap();
-
-    /*
-    let adc_vol_probe = Esp32VoltageProbe::new(
+    let mut ads = ADSVoltageProbe::from_gpio(
+        (&mut controller.peripherals.I2C0)
+            .take()
+            .ok_or(CoreError::PeripheralTaken("I2C0"))?,
+        sda,
+        scl,
+    )?;
+    ads.cfg_probe(
+        TestProbeId::SolarPv1,
+        Address::GND,
+        InputMultiplexer::AIN0GND,
         VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R1_WIRE,
         VOLTAGE_DIVIDER_R2,
-    );
-
-     */
+    )?
+    .cfg_probe(
+        TestProbeId::SolarPv2,
+        Address::VCC,
+        InputMultiplexer::AIN0GND,
+        VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R1_WIRE,
+        VOLTAGE_DIVIDER_R2,
+    )?
+    .cfg_probe(
+        TestProbeId::SolarPv3,
+        Address::VCC,
+        InputMultiplexer::AIN1GND,
+        VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R1_WIRE,
+        VOLTAGE_DIVIDER_R2,
+    )?;
 
     loop {
-        match adc.read_single_voltage(None).await {
-            Ok(raw_value) => {
-                log::info!("Read Voltage: {:.2} V", raw_value);
-            }
-            Err(_) => {
-                log::error!("Async I2C reading failed!");
+        for probe in TestProbeId::iter() {
+            match ads.read(probe).await {
+                Ok((raw_voltage, voltage)) => {
+                    log::info!(
+                        "[{:?}] Voltage: {:.3} V (raw: {:.3} V)",
+                        probe,
+                        voltage,
+                        raw_voltage
+                    );
+                }
+                Err(e) => {
+                    log::error!("Failed to read '{:?}' voltage probe: {:?}", probe, e);
+                }
             }
         }
-
-        //let (raw_value, raw_voltage, voltage) = adc_vol_probe.read(&mut adc, &mut adc_pin).await;
-
-        /*
-        log::info!(
-            "Reading[raw: {}, raw_voltage: {:.2} V, voltage, {:.2} V]",
-            raw_value,
-            raw_voltage,
-            voltage
-        );
-
-         */
 
         Timer::after(Duration::from_millis(1000)).await;
     }
