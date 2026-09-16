@@ -7,7 +7,7 @@ use esp_hal::{
 };
 use strum::IntoEnumIterator; // 1. Import the trait
 use strum_macros::EnumIter;
-use vox_esp32_core::ads111x::{ADSVoltageProbe, Address};
+use vox_esp32_core::ads111x::{ADSProbe, Address, ProbeType, ACS758LCB_050B, V5_1};
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::esp32_adc::Esp32VoltageProbe;
 use vox_esp32_core::Controller; // 2. Import the derive macro
@@ -18,9 +18,10 @@ const VOLTAGE_DIVIDER_R2: f32 = 6038.0;
 
 #[derive(Copy, Clone, PartialOrd, PartialEq, Ord, Eq, Debug, EnumIter)]
 enum TestProbeId {
-    SolarPv1,
-    SolarPv2,
-    SolarPv3,
+    //SolarPv1,
+    //SolarPv2,
+    //SolarPv3,
+    SolarPvA1,
 }
 
 pub async fn run(controller: &mut Controller) -> Result<()> {
@@ -33,44 +34,68 @@ pub async fn run(controller: &mut Controller) -> Result<()> {
         .take()
         .ok_or(CoreError::PeripheralTaken("GPIO4"))?;
 
-    let mut ads = ADSVoltageProbe::from_gpio(
+    let mut ads = ADSProbe::from_gpio(
         (&mut controller.peripherals.I2C0)
             .take()
             .ok_or(CoreError::PeripheralTaken("I2C0"))?,
         sda,
         scl,
     )?;
+    /*
     ads.cfg_probe(
         TestProbeId::SolarPv1,
         Address::GND,
         InputMultiplexer::AIN0GND,
-        VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R1_WIRE,
-        VOLTAGE_DIVIDER_R2,
+        ProbeType::voltage_divider(
+            VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R1_WIRE,
+            VOLTAGE_DIVIDER_R2,
+        ),
     )?
     .cfg_probe(
         TestProbeId::SolarPv2,
         Address::VCC,
         InputMultiplexer::AIN0GND,
-        VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R1_WIRE,
-        VOLTAGE_DIVIDER_R2,
+        ProbeType::voltage_divider(
+            VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R1_WIRE,
+            VOLTAGE_DIVIDER_R2,
+        ),
     )?
     .cfg_probe(
         TestProbeId::SolarPv3,
         Address::VCC,
         InputMultiplexer::AIN1GND,
-        VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R1_WIRE,
-        VOLTAGE_DIVIDER_R2,
+        ProbeType::voltage_divider(
+            VOLTAGE_DIVIDER_R1 + VOLTAGE_DIVIDER_R1_WIRE,
+            VOLTAGE_DIVIDER_R2,
+        ),
+    )?;
+
+     */
+
+    ads.cfg_probe(
+        TestProbeId::SolarPvA1,
+        Address::GND,
+        InputMultiplexer::AIN3GND,
+        ProbeType::acs758(V5_1, ACS758LCB_050B, 0.00321),
     )?;
 
     loop {
         for probe in TestProbeId::iter() {
             match ads.read(probe).await {
-                Ok((raw_voltage, voltage)) => {
+                Ok((raw_voltage, Ok(probe_value))) => {
                     log::info!(
-                        "[{:?}] Voltage: {:.3} V (raw: {:.3} V)",
+                        "[{:?}] Value: {} (raw: {:.10} V)",
                         probe,
-                        voltage,
+                        probe_value,
                         raw_voltage
+                    );
+                }
+                Ok((raw_voltage, Err(e))) => {
+                    log::error!(
+                        "Failed to convert voltage '{:.3} V' from '{:?}' voltage probe: {:?}",
+                        raw_voltage,
+                        probe,
+                        e
                     );
                 }
                 Err(e) => {
