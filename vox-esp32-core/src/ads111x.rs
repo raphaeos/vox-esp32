@@ -57,6 +57,7 @@ pub enum ProbeType {
     VoltageDivider {
         r1_ohms: f32,
         r2_ohms: f32,
+        zero_offset: f32,
     },
     ACS758 {
         vcc: f32,
@@ -67,8 +68,12 @@ pub enum ProbeType {
 
 impl ProbeType {
     // Constructors
-    pub fn voltage_divider(r1_ohms: f32, r2_ohms: f32) -> Self {
-        ProbeType::VoltageDivider { r1_ohms, r2_ohms }
+    pub fn voltage_divider(r1_ohms: f32, r2_ohms: f32, zero_offset: f32) -> Self {
+        ProbeType::VoltageDivider {
+            r1_ohms,
+            r2_ohms,
+            zero_offset,
+        }
     }
 
     pub fn acs758(vcc: f32, version: ACS758Version, zero_offset: f32) -> Self {
@@ -83,14 +88,18 @@ impl ProbeType {
 impl Into<Box<dyn Probe>> for ProbeType {
     fn into(self) -> Box<dyn Probe> {
         match self {
-            ProbeType::VoltageDivider { r1_ohms, r2_ohms } => {
+            ProbeType::VoltageDivider {
+                r1_ohms,
+                r2_ohms,
+                zero_offset,
+            } => {
                 let multiplier = if (r1_ohms > 0.0 && r2_ohms > 0.0) {
                     (r1_ohms + r2_ohms) / r2_ohms
                 } else {
                     0.0
                 };
 
-                Box::new(VoltageDividerProbe::new(multiplier))
+                Box::new(VoltageDividerProbe::new(multiplier, zero_offset))
             }
             ProbeType::ACS758 {
                 vcc,
@@ -121,18 +130,33 @@ pub trait Probe {
 
 struct VoltageDividerProbe {
     multiplier: f32,
+    zero_offset: f32,
 }
 
 impl VoltageDividerProbe {
-    fn new(multiplier: f32) -> Self {
-        Self { multiplier }
+    fn new(multiplier: f32, zero_offset: f32) -> Self {
+        Self {
+            multiplier,
+            zero_offset,
+        }
     }
 }
 
 impl Probe for VoltageDividerProbe {
     fn calculate(&self, raw_voltage: f32) -> Result<ProbeValue> {
         if self.multiplier > 0.0 {
-            Ok(ProbeValue::Volts(raw_voltage * self.multiplier))
+            let raw_corrected = raw_voltage + self.zero_offset;
+            let val = (raw_corrected * self.multiplier) + self.zero_offset;
+
+            log::debug!(
+                "VoltageDividerProbe calculate: raw={}, cor={}, mul={}, val={}",
+                raw_voltage,
+                raw_corrected,
+                self.multiplier,
+                val
+            );
+
+            Ok(ProbeValue::Volts(val))
         } else {
             Ok(ProbeValue::Volts(0.0))
         }
@@ -199,7 +223,7 @@ impl ADSConfig {
     }
 }
 
-pub struct ADSProbe<K>
+pub struct ADSMultiProbe<K>
 where
     K: Ord + Send + Debug + 'static,
 {
@@ -207,7 +231,7 @@ where
     configs: BTreeMap<K, ADSConfig>,
 }
 
-impl<K> ADSProbe<K>
+impl<K> ADSMultiProbe<K>
 where
     K: Ord + Send + Debug + 'static,
 {
