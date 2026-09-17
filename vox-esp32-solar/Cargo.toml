@@ -26,6 +26,8 @@ opt-level = 's'
 log.workspace = true
 thiserror.workspace = true
 anyhow.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
 esp-hal.workspace = true
 esp-rtos.workspace = true
 esp-bootloader-esp-idf.workspace = true
@@ -33,10 +35,13 @@ esp-println.workspace = true
 embassy-time.workspace = true
 embassy-executor.workspace = true
 
-vox-esp32-core = { workspace = true, features = ["esp32s3-adc"] }
+vox-esp32-core = { workspace = true, features = ["ads111x"] }
 
+embedded-ads111x.workspace = true
 num_enum.workspace = true
 embedded-io-async.workspace = true
 futures.workspace = true
 async-channel.workspace = true
 nb.workspace = true
+postcard.workspace = true
+serde.workspace = true

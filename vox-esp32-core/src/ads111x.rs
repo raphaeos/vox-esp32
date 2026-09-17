@@ -115,6 +115,15 @@ pub enum ProbeValue {
     MilliAmps(f32),
 }
 
+impl ProbeValue {
+    pub fn value(self) -> f32 {
+        match self {
+            ProbeValue::Volts(val) => val,
+            ProbeValue::MilliAmps(val) => val,
+        }
+    }
+}
+
 impl Display for ProbeValue {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
@@ -148,7 +157,7 @@ impl Probe for VoltageDividerProbe {
             let raw_corrected = raw_voltage + self.zero_offset;
             let val = (raw_corrected * self.multiplier) + self.zero_offset;
 
-            log::debug!(
+            log::trace!(
                 "VoltageDividerProbe calculate: raw={}, cor={}, mul={}, val={}",
                 raw_voltage,
                 raw_corrected,

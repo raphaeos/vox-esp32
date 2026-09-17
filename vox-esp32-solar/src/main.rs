@@ -8,19 +8,38 @@
 #![deny(clippy::large_stack_frames)]
 extern crate alloc;
 
-use crate::powmr_mppt::MPPTManager;
+use crate::metrics::MetricsManager;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::analog::adc::{AdcCalScheme, AdcHasCurveCal};
 use vox_esp32_core::esp32_led::{LEDColor, LEDStatus};
 
+mod metrics;
 mod powmr_mppt;
 
 /**
 
 GPIO Notes:
+    GPIO 4:  ADS1115 - SCL
+    GPIO 5:  ADS1115 - SDA
     GPIO 17: Serial Module - TX
     GPIO 18: Serial Module - RX
+
+ADS1115 Notes:
+
+ GND:
+
+   A0: Pv1 V
+   A1: Pv1 A
+   A2: Pv2 V
+   A3: Pv2 A
+
+ VCC:
+
+   A0: Pv3 V
+   A1: Pv3 A
+   A2:
+   A3:
 
 **/
 
@@ -37,7 +56,8 @@ async fn main(spawner: Spawner) -> ! {
     let mut controller =
         vox_esp32_core::init(spawner).expect("failed to initialize ESP controller");
 
-    let mppt_rx = MPPTManager::spawn(&mut controller).expect("failed to spawn MPPTManager");
+    let metrics_rx =
+        MetricsManager::spawn(&mut controller).expect("failed to spawn MetricsManager");
 
     controller
         .led
@@ -45,7 +65,7 @@ async fn main(spawner: Spawner) -> ! {
         .await;
 
     loop {
-        match mppt_rx.recv().await {
+        match metrics_rx.recv().await {
             Ok(Ok(state)) => {
                 log::info!("mppt state: {}", state);
             }

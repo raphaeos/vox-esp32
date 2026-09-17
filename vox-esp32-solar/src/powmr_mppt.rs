@@ -196,7 +196,7 @@ impl MPPTManager {
         log::info!("Vox ESP32 Solar: PowMr MPPT Manager started");
 
         loop {
-            log::debug!("MPPTManager: Waiting for parallel communications ...");
+            log::trace!("MPPTManager: Waiting for parallel communications ...");
 
             let mut buf = [0u8; 64];
 
@@ -207,7 +207,7 @@ impl MPPTManager {
             .await
             {
                 Ok(Ok(total_read)) => {
-                    log::debug!("MPPTManager: ... Read OK, read={}", total_read);
+                    log::trace!("MPPTManager: ... Read OK, read={}", total_read);
 
                     let data = &buf[..total_read];
 
@@ -226,7 +226,7 @@ impl MPPTManager {
                         continue;
                     }
 
-                    log::debug!(
+                    log::trace!(
                         "MPPTManager: ... RAW ({}B): {}",
                         total_read,
                         data.iter()

@@ -1,16 +1,11 @@
-use anyhow::{anyhow, Result};
+use anyhow::Result;
 use embassy_time::{Duration, Timer};
-use embedded_ads111x::{ADS111x, ADS111xConfig, InputMultiplexer};
-use esp_hal::{
-    i2c::master::{Config, I2c},
-    peripherals::Peripherals,
-};
-use strum::IntoEnumIterator; // 1. Import the trait
+use embedded_ads111x::InputMultiplexer;
+use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use vox_esp32_core::ads111x::{ADSMultiProbe, Address, ProbeType, ACS758LCB_050B, V5_1};
 use vox_esp32_core::common::CoreError;
-use vox_esp32_core::esp32_adc::Esp32VoltageProbe;
-use vox_esp32_core::Controller; // 2. Import the derive macro
+use vox_esp32_core::Controller;
 
 const VOLTAGE_DIVIDER_R1: f32 = 181400.0;
 const VOLTAGE_DIVIDER_R1_WIRE: f32 = 0.65;
