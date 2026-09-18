@@ -66,10 +66,9 @@ async fn main(spawner: Spawner) -> ! {
 
     loop {
         match metrics_rx.recv().await {
-            Ok(Ok(state)) => {
-                log::info!("mppt state: {}", state);
+            Ok(metrics) => {
+                log::info!("Solar Metrics: {:?}", metrics);
             }
-            Ok(Err(err)) => log::error!("mppt state error: {}", err),
             Err(e) => log::error!("mppt recv error: {}", e),
         }
 

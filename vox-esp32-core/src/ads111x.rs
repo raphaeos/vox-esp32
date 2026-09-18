@@ -20,6 +20,8 @@ pub const ACS758LCB_050B: ACS758Version = ACS758Version {
     floor_ma: 100.0, // Cut off anything below 100Mah (technically it can't read below 250Mah).
 };
 
+pub const QNHCK1_21_300_AMPS: f32 = 300.0;
+
 #[derive(Debug, Clone, Copy)]
 pub enum Address {
     GND,
@@ -64,6 +66,10 @@ pub enum ProbeType {
         version: ACS758Version,
         zero_offset: f32,
     },
+    QNHCK121Probe {
+        vcc_zero: f32,
+        amps: f32,
+    },
 }
 
 impl ProbeType {
@@ -82,6 +88,10 @@ impl ProbeType {
             version,
             zero_offset,
         }
+    }
+
+    pub fn qnhck121(vcc_zero: f32, amps: f32) -> Self {
+        ProbeType::QNHCK121Probe { vcc_zero, amps }
     }
 }
 
@@ -106,6 +116,9 @@ impl Into<Box<dyn Probe>> for ProbeType {
                 version,
                 zero_offset,
             } => Box::new(ACS758Probe::new(vcc, version, zero_offset)),
+            ProbeType::QNHCK121Probe { vcc_zero, amps } => {
+                Box::new(QNHCK121Probe::new(vcc_zero, amps))
+            }
         }
     }
 }
@@ -213,6 +226,43 @@ impl Probe for ACS758Probe {
                 milliamps
             },
         ))
+    }
+}
+
+struct QNHCK121Probe {
+    vcc_zero: f32,
+    amps: f32,
+}
+
+impl QNHCK121Probe {
+    fn new(vcc_zero: f32, amps: f32) -> Self {
+        Self { vcc_zero, amps }
+    }
+}
+
+impl Probe for QNHCK121Probe {
+    fn calculate(&self, raw_voltage: f32) -> Result<ProbeValue> {
+        const FLOOR_MA: f32 = 100.0;
+        const SENS_RANGE_MILLIVOLTS: f32 = 2000.0;
+        // Combined factor: 1000.0 (V to mV) * 1000.0 (A to mA)
+        const VOLTS_TO_MILLIAMPS: f32 = 1_000_000.0;
+
+        let sens = SENS_RANGE_MILLIVOLTS / self.amps;
+
+        let milliamps = ((raw_voltage - self.vcc_zero) / sens) * VOLTS_TO_MILLIAMPS;
+
+        log::debug!(
+            "QNHCK121Probe: raw={}, sense={}, milliamps={}",
+            raw_voltage,
+            sens,
+            milliamps
+        );
+
+        Ok(ProbeValue::MilliAmps(if milliamps.abs() < FLOOR_MA {
+            0.0
+        } else {
+            milliamps
+        }))
     }
 }
 

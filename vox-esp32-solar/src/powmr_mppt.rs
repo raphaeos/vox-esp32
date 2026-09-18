@@ -11,6 +11,7 @@ use esp_hal::{
     Async,
 };
 use num_enum::TryFromPrimitive;
+use serde::{Deserialize, Serialize};
 use thiserror::Error;
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::esp32_led::{LEDManager, LEDManagerHandle, LED};
@@ -34,10 +35,39 @@ pub enum MPPTError {
     Other(#[from] anyhow::Error),
 }
 
+#[derive(Error, Debug, Clone, Serialize, Deserialize)]
+pub enum MPPTErrorExt {
+    #[error("Timed-out waiting for heartbeat from MPPT parallel communications")]
+    TimeOut,
+    #[error("Read error")]
+    ReadError,
+    #[error("Non-sync frame from MPPT parallel communications")]
+    NonSyncFrame,
+    #[error("CRC Miss-match in MPPT parallel communications")]
+    CrcMissMatch,
+    #[error("Unknown battery type idx: {0}")]
+    UnknownBatteryTypeIdx(u8),
+    #[error("Error: {0}")]
+    Other(String),
+}
+
+impl From<MPPTError> for MPPTErrorExt {
+    fn from(error: MPPTError) -> Self {
+        match error {
+            MPPTError::TimeOut => MPPTErrorExt::TimeOut,
+            MPPTError::ReadError(_) => MPPTErrorExt::ReadError,
+            MPPTError::NonSyncFrame => MPPTErrorExt::NonSyncFrame,
+            MPPTError::CrcMissMatch => MPPTErrorExt::CrcMissMatch,
+            MPPTError::UnknownBatteryTypeIdx(idx) => MPPTErrorExt::UnknownBatteryTypeIdx(idx),
+            MPPTError::Other(e) => MPPTErrorExt::Other(format!("{:?}", e)),
+        }
+    }
+}
+
 // Define your custom strict Result type
 pub type MPPTResult<T> = Result<T, MPPTError>;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive, Serialize, Deserialize)]
 #[repr(u8)]
 pub enum BatteryType {
     SEL = 0,
@@ -77,6 +107,7 @@ impl BatteryType {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MPPTUserConfig {
     pub boost_voltage: u16,
     pub float_voltage: u16,
@@ -120,6 +151,7 @@ impl Display for MPPTUserConfig {
     }
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct MPPTState {
     pub master_id: u8,
     pub battery_voltage: u16,

@@ -6,6 +6,13 @@ edition = "2021"
 resolver = "2"
 rust-version = "1.82"
 
+[lib]
+name = "vox_esp32_solar"
+path = "src/lib.rs"
+test = false
+bench = false
+doctest = false
+
 [[bin]]
 name = "vox-esp32-solar"
 harness = false # do not use the built-in cargo test harness -> resolve rust-analyzer errors
