@@ -17,8 +17,8 @@ impl DeviceType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Device {
-    device_type: DeviceType,
-    device_id: u32,
+    pub device_type: DeviceType,
+    pub device_id: u32,
 }
 
 impl Device {

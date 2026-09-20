@@ -29,7 +29,7 @@ opt-level = 's'
 default = ["esp32s3-rgb-led", "esp32s3-can"]
 esp32s3-rgb-led = ["rmt-legacy", "smart-leds", "smart-leds-trait"]
 esp32s3-adc = []
-esp32s3-can = ["embedded-can"]
+esp32s3-can = []
 ads111x = ["embedded-ads111x"]
 rmt-legacy = []
 timer-legacy = []
@@ -58,4 +58,3 @@ smart-leds = { workspace = true, optional = true }
 smart-leds-trait = { workspace = true, optional = true }
 
 embedded-ads111x = { workspace = true, optional = true }
-embedded-can = { workspace = true, optional = true }
