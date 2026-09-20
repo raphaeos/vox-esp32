@@ -8,12 +8,14 @@
 #![deny(clippy::large_stack_frames)]
 extern crate alloc;
 
+use crate::can::{Message, MessageType};
 use crate::metrics::{Metrics, MetricsManager};
 use anyhow::Result;
 use async_channel::Receiver;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::analog::adc::{AdcCalScheme, AdcHasCurveCal};
+use vox_esp32_core::esp32_can::MessageId;
 use vox_esp32_core::esp32_led::{LEDColor, LEDStatus};
 use vox_esp32_core::types::{Device, DeviceType};
 use vox_esp32_core::Controller;
@@ -65,7 +67,7 @@ async fn main(spawner: Spawner) -> ! {
     let metrics_rx =
         MetricsManager::spawn(&mut controller).expect("failed to spawn Power MetricsManager");
 
-    init_can(&mut controller, metrics_rx.clone())
+    let can_rx = init_can(&mut controller, metrics_rx.clone())
         .await
         .expect("Failed to init CAN");
 
@@ -86,10 +88,15 @@ async fn main(spawner: Spawner) -> ! {
     }
 }
 
-async fn init_can(controller: &mut Controller, metrics_rx: Receiver<Metrics>) -> Result<()> {
-    can::register_handlers(controller)?;
+async fn init_can(
+    controller: &mut Controller,
+    metrics_rx: Receiver<Metrics>,
+) -> Result<Receiver<(MessageId, MessageType, Message)>> {
+    let can_rx = can::register_handlers(controller)?;
 
     let handle = controller.start_can()?;
 
-    can::spawn_sender(controller, metrics_rx, handle)
+    can::spawn_sender(controller, metrics_rx, handle)?;
+
+    Ok(can_rx)
 }

@@ -27,7 +27,7 @@ pub enum Message {
 
 pub fn register_handlers(
     controller: &mut Controller,
-) -> Result<Receiver<(MessageId, MessageType, Option<Message>)>> {
+) -> Result<Receiver<(MessageId, MessageType, Message)>> {
     let (tx, rx) = bounded(10);
     let tx2 = tx.clone();
 
@@ -43,7 +43,7 @@ pub fn register_handlers(
                     }
                 }
 
-                if message.is_some() {
+                if let Some(message) = message {
                     tx.try_send((msg_id.clone(), message_type, message))
                         .map_err(|e| anyhow!("CAN handler channel full: {:?}", e))?;
                 }
@@ -52,12 +52,14 @@ pub fn register_handlers(
             Ok(true)
         },
         move |msg_id| {
+            /*
             if is_allowed_msg_id(msg_id) {
                 let message_type: MessageType = msg_id.message_type.try_into()?;
 
                 tx2.try_send((msg_id.clone(), message_type, None))
                     .map_err(|e| anyhow!("CAN handler channel full: {:?}", e))?;
             }
+            */
 
             Ok(true)
         },
