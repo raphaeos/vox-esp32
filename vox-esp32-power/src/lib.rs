@@ -8,5 +8,6 @@
 #![deny(clippy::large_stack_frames)]
 extern crate alloc;
 
+pub mod can;
 pub mod metrics;
 pub mod powmr_mppt;

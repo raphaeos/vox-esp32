@@ -247,23 +247,6 @@ pub enum ProbeStatus {
     Err(ProbeError),
 }
 
-#[derive(Debug, Serialize, Deserialize)]
-pub struct BattMetric {
-    status: ProbeStatus,
-    voltage: f32,
-    amperage: f32,
-}
-
-impl Default for BattMetric {
-    fn default() -> Self {
-        Self {
-            status: ProbeStatus::Init,
-            voltage: 0.0,
-            amperage: 0.0,
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VAMetricEntry {
     id: VAId,

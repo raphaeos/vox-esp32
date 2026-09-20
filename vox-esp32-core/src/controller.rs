@@ -1,5 +1,5 @@
 use crate::common::CoreError;
-use anyhow::Result;
+use anyhow::{anyhow, Result};
 use embassy_executor::{SpawnToken, Spawner};
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio;
@@ -7,6 +7,7 @@ use esp_hal::gpio::InputConfig;
 use esp_hal::timer::timg::TimerGroup;
 
 use crate::esp32::Peripherals;
+use crate::esp32_can::{CANManager, CANManagerHandle, CANRxHandler};
 #[cfg(feature = "esp32s3-rgb-led")]
 use crate::esp32_led::{LEDManager, LEDManagerHandle};
 use crate::types::Device;
@@ -20,6 +21,8 @@ pub struct Controller {
     #[cfg(feature = "esp32s3-rgb-led")]
     pub led: LEDManagerHandle,
     spawner: Spawner,
+    #[cfg(feature = "esp32s3-can")]
+    can_mgr: Option<CANManager>,
 }
 
 impl Controller {
@@ -41,6 +44,9 @@ impl Controller {
         #[cfg(feature = "esp32s3-rgb-led")]
         let led = LEDManager::spawn(&spawner, &mut peripherals)?;
 
+        #[cfg(feature = "esp32s3-can")]
+        let can_mgr = Some(CANManager::new());
+
         Ok(Self {
             device,
             spawner,
@@ -48,6 +54,8 @@ impl Controller {
             boot_button,
             #[cfg(feature = "esp32s3-rgb-led")]
             led,
+            #[cfg(feature = "esp32s3-can")]
+            can_mgr,
         })
     }
 
@@ -80,5 +88,27 @@ impl Controller {
 
     pub fn spawn<S>(&self, token: SpawnToken<S>) {
         self.spawner.spawn(token);
+    }
+
+    pub fn add_can_handler(&mut self, handler: CANRxHandler) -> Result<&mut Self> {
+        if let Some(can_mgr) = self.can_mgr.as_mut() {
+            can_mgr.add_handler(handler);
+        } else {
+            return Err(anyhow!(
+                "Failed to add can handler: can_mgr has already been taken!"
+            ));
+        }
+
+        Ok(self)
+    }
+
+    pub fn start_can(&mut self) -> Result<CANManagerHandle> {
+        if let Some(can_mgr) = self.can_mgr.take() {
+            can_mgr.spawn(self)
+        } else {
+            Err(anyhow!(
+                "Failed to start CAN: can_mgr has already been taken!"
+            ))
+        }
     }
 }

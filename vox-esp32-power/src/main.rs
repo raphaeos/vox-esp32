@@ -8,15 +8,20 @@
 #![deny(clippy::large_stack_frames)]
 extern crate alloc;
 
-use crate::metrics::MetricsManager;
+use crate::metrics::{Metrics, MetricsManager};
+use anyhow::Result;
+use async_channel::Receiver;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::analog::adc::{AdcCalScheme, AdcHasCurveCal};
 use vox_esp32_core::esp32_led::{LEDColor, LEDStatus};
 use vox_esp32_core::types::{Device, DeviceType};
+use vox_esp32_core::Controller;
 
 mod metrics;
 mod powmr_mppt;
+
+mod can;
 
 /**
 
@@ -60,6 +65,10 @@ async fn main(spawner: Spawner) -> ! {
     let metrics_rx =
         MetricsManager::spawn(&mut controller).expect("failed to spawn Power MetricsManager");
 
+    init_can(&mut controller, metrics_rx.clone())
+        .await
+        .expect("Failed to init CAN");
+
     controller
         .led
         .set(Some(LEDColor::Teal), Some(LEDStatus::Blink), None, None)
@@ -75,4 +84,12 @@ async fn main(spawner: Spawner) -> ! {
 
         Timer::after(Duration::from_millis(1000)).await;
     }
+}
+
+async fn init_can(controller: &mut Controller, metrics_rx: Receiver<Metrics>) -> Result<()> {
+    can::register_handlers(controller)?;
+
+    let handle = controller.start_can()?;
+
+    can::spawn_sender(controller, metrics_rx, handle)
 }

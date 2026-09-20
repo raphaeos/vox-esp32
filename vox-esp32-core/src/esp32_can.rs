@@ -1,6 +1,8 @@
 use crate::common::CoreError;
 use crate::types::{Device, DeviceType};
 use crate::Controller;
+use alloc::boxed::Box;
+use alloc::vec;
 use alloc::vec::Vec;
 use anyhow::{anyhow, Result};
 use async_channel::{bounded, Receiver, RecvError, Sender};
@@ -14,11 +16,11 @@ use futures::FutureExt;
 
 const MAX_MESSAGE_SEQUENCE: u32 = 2000;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct MessageId {
-    device: Device,
-    message_type: u32,
-    sequence_no: u32,
+    pub device: Device,
+    pub message_type: u32,
+    pub sequence_no: u32,
 }
 
 impl MessageId {
@@ -68,7 +70,47 @@ pub struct CANManagerHandle {
     tx_request: Sender<(u32)>,
 }
 
-impl CANManagerHandle {}
+impl CANManagerHandle {
+    pub async fn tx(&mut self, message_type_id: u32, payload: Vec<u8>) -> Result<()> {
+        self.tx
+            .send((message_type_id, payload))
+            .await
+            .map_err(|e| anyhow!("CAN tx channel closed: {}", e))
+    }
+
+    pub async fn tx_request(&mut self, message_type_id: u32) -> Result<()> {
+        self.tx_request
+            .send((message_type_id))
+            .await
+            .map_err(|e| anyhow!("CAN tx_request channel closed: {}", e))
+    }
+}
+
+pub struct CANRxHandler {
+    handle_cb: Box<dyn FnMut(&MessageId, &[u8]) -> Result<bool> + Send>,
+    handle_request_cb: Box<dyn FnMut(&MessageId) -> Result<bool> + Send>,
+}
+
+impl CANRxHandler {
+    pub fn new<F, R>(handle_cb: F, handle_request_cb: R) -> Self
+    where
+        F: FnMut(&MessageId, &[u8]) -> Result<bool> + Send + 'static,
+        R: FnMut(&MessageId) -> Result<bool> + Send + 'static,
+    {
+        Self {
+            handle_cb: Box::new(handle_cb),
+            handle_request_cb: Box::new(handle_request_cb),
+        }
+    }
+
+    pub async fn handle(&mut self, message_id: &MessageId, payload: &[u8]) -> Result<bool> {
+        (self.handle_cb)(message_id, payload)
+    }
+
+    pub async fn handle_request(&mut self, message_id: &MessageId) -> Result<bool> {
+        (self.handle_request_cb)(message_id)
+    }
+}
 
 #[embassy_executor::task]
 async fn can_rx_task(mut wkr: CANRxWorker) {
@@ -80,10 +122,21 @@ async fn can_tx_task(mut wkr: CANTxWorker) {
     wkr.run().await;
 }
 
-pub struct CANManager {}
+pub struct CANManager {
+    handlers: Vec<CANRxHandler>,
+}
 
 impl CANManager {
-    pub(crate) fn spawn(controller: &mut Controller) -> Result<CANManagerHandle> {
+    pub(crate) fn new() -> Self {
+        Self { handlers: vec![] }
+    }
+
+    pub(crate) fn add_handler(&mut self, handler: CANRxHandler) -> &mut Self {
+        self.handlers.push(handler);
+        self
+    }
+
+    pub(crate) fn spawn(self, controller: &mut Controller) -> Result<CANManagerHandle> {
         log::info!("Vox ESP32 Core: CAN Manager started");
 
         const TWAI_BAUDRATE: BaudRate = BaudRate::B1000K;
@@ -118,6 +171,7 @@ impl CANManager {
         controller.spawn(can_rx_task(CANRxWorker::new(
             controller.device.clone(),
             can_rx,
+            self.handlers,
         ))?);
         controller.spawn(can_tx_task(CANTxWorker::new(
             controller.device.clone(),
@@ -133,11 +187,16 @@ impl CANManager {
 pub struct CANRxWorker {
     device: Device,
     can_rx: TwaiRx<'static, Async>,
+    handlers: Vec<CANRxHandler>,
 }
 
 impl CANRxWorker {
-    fn new(device: Device, can_rx: TwaiRx<'static, Async>) -> Self {
-        Self { device, can_rx }
+    fn new(device: Device, can_rx: TwaiRx<'static, Async>, handlers: Vec<CANRxHandler>) -> Self {
+        Self {
+            device,
+            can_rx,
+            handlers,
+        }
     }
 
     async fn run(&mut self) {
@@ -170,11 +229,24 @@ impl CANRxWorker {
                 return Ok(());
             }
 
-            // TODO: Process
-            if rx_frame.is_remote_request() {
-                // TODO
-            } else {
-                // TODO
+            for handler in self.handlers.iter_mut() {
+                if rx_frame.is_remote_request() {
+                    match handler.handle_request(&msg_id).await {
+                        Ok(true) => continue,
+                        Ok(false) => return Ok(()), // Abort chain.
+                        Err(e) => {
+                            log::error!("Failed to call handle_request to handle CAN frame: {}", e);
+                        }
+                    }
+                } else {
+                    match handler.handle(&msg_id, rx_frame.data()).await {
+                        Ok(true) => continue,
+                        Ok(false) => return Ok(()), // Abort chain.
+                        Err(e) => {
+                            log::error!("Failed to call handler to handle CAN frame: {}", e);
+                        }
+                    }
+                }
             }
         } else {
             log::warn!(
