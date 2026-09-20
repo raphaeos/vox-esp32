@@ -17,6 +17,7 @@ use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::system::software_reset;
 use vox_esp32_core::esp32_led::{LEDColor, LEDStatus};
+use vox_esp32_core::types::{Device, DeviceType};
 use vox_esp32_core::Controller;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
@@ -29,8 +30,8 @@ esp_bootloader_esp_idf::esp_app_desc!();
 )]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    let mut controller =
-        vox_esp32_core::init(spawner).expect("failed to initialize ESP controller");
+    let mut controller = vox_esp32_core::init(Device::new(DeviceType::None, 0), spawner)
+        .expect("failed to initialize ESP controller");
 
     controller
         .led

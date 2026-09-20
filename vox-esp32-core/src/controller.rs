@@ -9,19 +9,25 @@ use esp_hal::timer::timg::TimerGroup;
 use crate::esp32::Peripherals;
 #[cfg(feature = "esp32s3-rgb-led")]
 use crate::esp32_led::{LEDManager, LEDManagerHandle};
+use crate::types::Device;
 
 extern crate alloc;
 
 pub struct Controller {
-    spawner: Spawner,
+    pub device: Device,
     pub peripherals: Peripherals,
     pub boot_button: gpio::Input<'static>,
     #[cfg(feature = "esp32s3-rgb-led")]
     pub led: LEDManagerHandle,
+    spawner: Spawner,
 }
 
 impl Controller {
-    pub(crate) fn new(spawner: Spawner, mut peripherals: Peripherals) -> Result<Self> {
+    pub(crate) fn new(
+        device: Device,
+        spawner: Spawner,
+        mut peripherals: Peripherals,
+    ) -> Result<Self> {
         let boot_config = InputConfig::default().with_pull(gpio::Pull::Up);
 
         let boot_button = gpio::Input::new(
@@ -36,6 +42,7 @@ impl Controller {
         let led = LEDManager::spawn(&spawner, &mut peripherals)?;
 
         Ok(Self {
+            device,
             spawner,
             peripherals,
             boot_button,
@@ -44,7 +51,7 @@ impl Controller {
         })
     }
 
-    pub(crate) fn setup(spawner: Spawner) -> Result<Self> {
+    pub(crate) fn setup(device: Device, spawner: Spawner) -> Result<Self> {
         let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
         let mut peripherals = Peripherals::new(esp_hal::init(config));
 
@@ -68,7 +75,7 @@ impl Controller {
                 .ok_or(CoreError::PeripheralTaken("FROM_CPU_INTR0"))?,
         );
 
-        Self::new(spawner, peripherals)
+        Self::new(device, spawner, peripherals)
     }
 
     pub fn spawn<S>(&self, token: SpawnToken<S>) {

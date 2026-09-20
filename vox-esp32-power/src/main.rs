@@ -13,6 +13,7 @@ use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
 use esp_hal::analog::adc::{AdcCalScheme, AdcHasCurveCal};
 use vox_esp32_core::esp32_led::{LEDColor, LEDStatus};
+use vox_esp32_core::types::{Device, DeviceType};
 
 mod metrics;
 mod powmr_mppt;
@@ -38,8 +39,8 @@ ADS1115 Notes:
 
    A0: Pv3 V
    A1: Pv3 A
-   A2:
-   A3:
+   A2: Batt V
+   A3: Batt A
 
 **/
 
@@ -53,11 +54,11 @@ esp_bootloader_esp_idf::esp_app_desc!();
 )]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    let mut controller =
-        vox_esp32_core::init(spawner).expect("failed to initialize ESP controller");
+    let mut controller = vox_esp32_core::init(Device::new(DeviceType::Power, 1), spawner)
+        .expect("failed to initialize ESP controller");
 
     let metrics_rx =
-        MetricsManager::spawn(&mut controller).expect("failed to spawn MetricsManager");
+        MetricsManager::spawn(&mut controller).expect("failed to spawn Power MetricsManager");
 
     controller
         .led
@@ -67,9 +68,9 @@ async fn main(spawner: Spawner) -> ! {
     loop {
         match metrics_rx.recv().await {
             Ok(metrics) => {
-                log::info!("Solar Metrics: {:?}", metrics);
+                log::info!("Power Metrics: {:?}", metrics);
             }
-            Err(e) => log::error!("mppt recv error: {}", e),
+            Err(e) => log::error!("Power Metrics Recv Error: {}", e),
         }
 
         Timer::after(Duration::from_millis(1000)).await;

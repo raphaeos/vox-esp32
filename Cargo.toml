@@ -1,5 +1,5 @@
 [workspace]
-members = ["vox-esp32-core", "vox-esp32-blank", "vox-esp32-testing", "vox-esp32-solar"]
+members = ["vox-esp32-core", "vox-esp32-blank", "vox-esp32-testing", "vox-esp32-power"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -53,3 +53,4 @@ sha2 = { version = "0.11.0", default-features = false } # Hashing and integrity 
 # --- Sensors and modules ---
 embedded-io-async = { version = "0.7.0" }
 embedded-ads111x = { path = "../ads111x", features = ["async"] }
+embedded-can = { version = "0.4.1" }

@@ -15,12 +15,16 @@ pub mod controller;
 pub mod esp32;
 #[cfg(feature = "esp32s3-adc")]
 pub mod esp32_adc;
+#[cfg(feature = "esp32s3-can")]
+pub mod esp32_can;
 #[cfg(feature = "esp32s3-rgb-led")]
 pub mod esp32_led;
+pub mod types;
 
 pub use controller::Controller;
 pub use esp32::Peripherals;
 
+use crate::types::Device;
 use anyhow::Result;
 use core::panic::PanicInfo;
 use embassy_executor::Spawner;
@@ -38,10 +42,10 @@ fn panic(info: &PanicInfo) -> ! {
     software_reset();
 }
 
-pub fn init(spawner: Spawner) -> Result<Controller> {
+pub fn init(device: Device, spawner: Spawner) -> Result<Controller> {
     esp_println::logger::init_logger_from_env();
 
     log::info!("Vox ESP32 Core: Initializing");
 
-    Controller::setup(spawner)
+    Controller::setup(device, spawner)
 }

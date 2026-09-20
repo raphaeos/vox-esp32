@@ -1,5 +1,5 @@
 [package]
-name = "vox-esp32-solar"
+name = "vox-esp32-power"
 version = "0.1.0"
 authors = ["Raph <iam@raphaeos.com>"]
 edition = "2021"
@@ -7,14 +7,14 @@ resolver = "2"
 rust-version = "1.82"
 
 [lib]
-name = "vox_esp32_solar"
+name = "vox_esp32_power"
 path = "src/lib.rs"
 test = false
 bench = false
 doctest = false
 
 [[bin]]
-name = "vox-esp32-solar"
+name = "vox-esp32-power"
 harness = false # do not use the built-in cargo test harness -> resolve rust-analyzer errors
 
 # For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
