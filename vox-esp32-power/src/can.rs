@@ -1,7 +1,9 @@
 use alloc::borrow::ToOwned;
 use anyhow::{anyhow, Result};
 use async_channel::{bounded, Receiver, RecvError};
-use vox_esp32_core::esp32_can::{CANManagerHandle, CANRxHandler, CANRxWorker, MessageId};
+use vox_esp32_core::esp32_can::{
+    CANManagerHandle, CANRxHandler, CANRxWorker, MessageId, Priority, Topic,
+};
 use vox_esp32_core::Controller;
 
 use crate::metrics::Metrics;
@@ -29,35 +31,42 @@ pub fn register_handlers(
     controller: &mut Controller,
 ) -> Result<Receiver<(MessageId, MessageType, Message)>> {
     let (tx, rx) = bounded(10);
-    let tx2 = tx.clone();
+    //let tx2 = tx.clone();
 
     controller.add_can_handler(CANRxHandler::new(
         move |msg_id, payload| {
-            if is_allowed_msg_id(msg_id) {
-                let message_type: MessageType = msg_id.message_type.try_into()?;
-                let mut message: Option<Message> = None;
-                match message_type {
-                    MessageType::Metrics => {
-                        let val: Metrics = postcard::from_bytes(payload)?;
-                        message = Some(Message::Metrics(val));
+            let message_type: MessageType = msg_id.message_type.try_into()?;
+
+            match msg_id.topic {
+                Topic::Power => {
+                    let mut message: Option<Message> = None;
+                    match message_type {
+                        MessageType::Metrics => {
+                            let val: Metrics = postcard::from_bytes(payload)?;
+                            message = Some(Message::Metrics(val));
+                        }
+                    }
+
+                    if let Some(message) = message {
+                        tx.try_send((msg_id.clone(), message_type, message))
+                            .map_err(|e| anyhow!("CAN handler channel full: {:?}", e))?;
                     }
                 }
-
-                if let Some(message) = message {
-                    tx.try_send((msg_id.clone(), message_type, message))
-                        .map_err(|e| anyhow!("CAN handler channel full: {:?}", e))?;
-                }
+                _ => {}
             }
 
             Ok(true)
         },
         move |msg_id| {
             /*
-            if is_allowed_msg_id(msg_id) {
-                let message_type: MessageType = msg_id.message_type.try_into()?;
+            let message_type: MessageType = msg_id.message_type.try_into()?;
 
-                tx2.try_send((msg_id.clone(), message_type, None))
-                    .map_err(|e| anyhow!("CAN handler channel full: {:?}", e))?;
+            match msg_id.topic {
+                Topic::Power => {
+                    tx2.try_send((msg_id.clone(), message_type, None))
+                        .map_err(|e| anyhow!("CAN handler channel full: {:?}", e))?;
+                }
+                _ => {}
             }
             */
 
@@ -66,10 +75,6 @@ pub fn register_handlers(
     ))?;
 
     Ok(rx)
-}
-
-fn is_allowed_msg_id(msg_id: &MessageId) -> bool {
-    msg_id.device.device_type == DeviceType::Power
 }
 
 #[embassy_executor::task]
@@ -92,7 +97,14 @@ async fn can_sender_worker(
 
     let data = postcard::to_allocvec(&metrics)?;
 
-    can_handle.tx(MessageType::Metrics.id(), data).await?;
+    can_handle
+        .tx(
+            Priority::Default,
+            Topic::Power,
+            MessageType::Metrics.id(),
+            data,
+        )
+        .await?;
 
     Ok(())
 }

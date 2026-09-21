@@ -13,22 +13,63 @@ use futures::future::{self};
 use futures::pin_mut;
 use futures::select_biased;
 use futures::FutureExt;
+use num_enum::TryFromPrimitive;
 
-const MAX_MESSAGE_SEQUENCE: u32 = 2000;
+const MAX_MESSAGE_SEQUENCE: u32 = 63;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[repr(u32)]
+pub enum Priority {
+    Highest = 0,
+    High = 1,
+    Default = 2,
+    Lowest = 3,
+}
+
+impl Priority {
+    pub fn id(&self) -> u32 {
+        *self as u32
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[repr(u32)]
+pub enum Topic {
+    None = 1,
+    Controller = 2,
+    Power = 3,
+    WaterHeater = 4,
+}
+
+impl Topic {
+    pub fn id(&self) -> u32 {
+        *self as u32
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct MessageId {
-    pub device: Device,
-    pub message_type: u32,
+    pub priority: Priority,
     pub sequence_no: u32,
+    pub topic: Topic,
+    pub message_type: u32,
+    pub sender: Device,
 }
 
 impl MessageId {
-    pub fn new(device: Device, message_type: u32, sequence_no: u32) -> Self {
+    pub fn new(
+        priority: Priority,
+        sequence_no: u32,
+        topic: Topic,
+        message_type: u32,
+        sender: Device,
+    ) -> Self {
         Self {
-            device,
-            message_type,
+            priority,
             sequence_no,
+            topic,
+            message_type,
+            sender,
         }
     }
 }
@@ -37,15 +78,22 @@ impl TryFrom<ExtendedId> for MessageId {
     type Error = CoreError;
 
     fn try_from(value: ExtendedId) -> Result<Self, Self::Error> {
-        let (device_type_n, device_id, message_type, sequence_no) = unpack_msg_id(value);
+        let (priority, sequence_no, topic_type, message_type, device_type, sender_id) =
+            unpack_msg_id(value);
+
+        let priority = Priority::try_from(priority).map_err(|e| CoreError::Other(anyhow!(e)))?;
+
+        let topic = Topic::try_from(topic_type).map_err(|e| CoreError::Other(anyhow!(e)))?;
 
         let device_type =
-            DeviceType::try_from(device_type_n).map_err(|e| CoreError::Other(anyhow!(e)))?;
+            DeviceType::try_from(device_type).map_err(|e| CoreError::Other(anyhow!(e)))?;
 
         Ok(Self {
-            device: Device::new(device_type, device_id),
-            message_type,
+            priority,
             sequence_no,
+            topic,
+            message_type,
+            sender: Device::new(device_type, sender_id),
         })
     }
 }
@@ -55,10 +103,12 @@ impl TryInto<ExtendedId> for MessageId {
 
     fn try_into(self) -> Result<ExtendedId, Self::Error> {
         Ok(pack_msg_id(
-            self.device.device_type.id(),
-            self.device.device_id,
-            self.message_type,
+            self.priority.id(),
             self.sequence_no,
+            self.topic.id(),
+            self.message_type,
+            self.sender.device_type.id(),
+            self.sender.device_id,
         )
         .map_err(|e| CoreError::Other(anyhow!(e)))?)
     }
@@ -66,21 +116,32 @@ impl TryInto<ExtendedId> for MessageId {
 
 #[derive(Clone)]
 pub struct CANManagerHandle {
-    tx: Sender<(u32, Vec<u8>)>,
-    tx_request: Sender<(u32)>,
+    tx: Sender<(Priority, Topic, u32, Vec<u8>)>,
+    tx_request: Sender<(Priority, Topic, u32)>,
 }
 
 impl CANManagerHandle {
-    pub async fn tx(&mut self, message_type_id: u32, payload: Vec<u8>) -> Result<()> {
+    pub async fn tx(
+        &mut self,
+        priority: Priority,
+        topic: Topic,
+        message_type_id: u32,
+        payload: Vec<u8>,
+    ) -> Result<()> {
         self.tx
-            .send((message_type_id, payload))
+            .send((priority, topic, message_type_id, payload))
             .await
             .map_err(|e| anyhow!("CAN tx channel closed: {}", e))
     }
 
-    pub async fn tx_request(&mut self, message_type_id: u32) -> Result<()> {
+    pub async fn tx_request(
+        &mut self,
+        priority: Priority,
+        topic: Topic,
+        message_type_id: u32,
+    ) -> Result<()> {
         self.tx_request
-            .send((message_type_id))
+            .send((priority, topic, message_type_id))
             .await
             .map_err(|e| anyhow!("CAN tx_request channel closed: {}", e))
     }
@@ -225,7 +286,7 @@ impl CANRxWorker {
             let msg_id = MessageId::try_from(id)?;
 
             // Skip messages from ourself.
-            if msg_id.device.eq(&self.device) {
+            if msg_id.sender.eq(&self.device) {
                 return Ok(());
             }
 
@@ -262,8 +323,8 @@ impl CANRxWorker {
 pub struct CANTxWorker {
     device: Device,
     can_tx: TwaiTx<'static, Async>,
-    rx: Receiver<(u32, Vec<u8>)>,
-    rx_request: Receiver<(u32)>,
+    rx: Receiver<(Priority, Topic, u32, Vec<u8>)>,
+    rx_request: Receiver<(Priority, Topic, u32)>,
     seq: u32,
 }
 
@@ -271,8 +332,8 @@ impl CANTxWorker {
     fn new(
         device: Device,
         can_tx: TwaiTx<'static, Async>,
-        rx: Receiver<(u32, Vec<u8>)>,
-        rx_request: Receiver<(u32)>,
+        rx: Receiver<(Priority, Topic, u32, Vec<u8>)>,
+        rx_request: Receiver<(Priority, Topic, u32)>,
     ) -> Self {
         Self {
             device,
@@ -293,8 +354,8 @@ impl CANTxWorker {
             select_biased! {
                 msg_res = rx_fut => {
                     match msg_res {
-                        Ok((message_type, payload)) => {
-                            if let Err(e) = self.handle_send(message_type, payload).await {
+                        Ok((priority, topic, message_type, payload)) => {
+                            if let Err(e) = self.handle_send(priority, topic, message_type, payload).await {
                                 log::error!("Failed to handle CANTxWorker send (rx): {}", e);
                             }
                         }
@@ -305,8 +366,8 @@ impl CANTxWorker {
                 }
                 msg_res = rx_request_fut => {
                     match msg_res {
-                        Ok((message_type)) => {
-                            if let Err(e) = self.handle_send_request(message_type).await {
+                        Ok((priority, topic, message_type)) => {
+                            if let Err(e) = self.handle_send_request(priority, topic, message_type).await {
                                 log::error!("Failed to handle CANTxWorker send request (rx_request): {}", e);
                             }
                         }
@@ -319,8 +380,14 @@ impl CANTxWorker {
         }
     }
 
-    async fn handle_send(&mut self, message_type: u32, payload: Vec<u8>) -> Result<()> {
-        let frame_id = self.make_frame_id(message_type, true)?;
+    async fn handle_send(
+        &mut self,
+        priority: Priority,
+        topic: Topic,
+        message_type: u32,
+        payload: Vec<u8>,
+    ) -> Result<()> {
+        let frame_id = self.make_frame_id(priority, topic, message_type, true)?;
 
         let tx_frame =
             EspTwaiFrame::new(frame_id, &payload).ok_or(anyhow!("Failed to create frame"))?;
@@ -328,8 +395,13 @@ impl CANTxWorker {
         self.send_can_frame(&tx_frame).await
     }
 
-    async fn handle_send_request(&mut self, message_type: u32) -> Result<()> {
-        let frame_id = self.make_frame_id(message_type, false)?;
+    async fn handle_send_request(
+        &mut self,
+        priority: Priority,
+        topic: Topic,
+        message_type: u32,
+    ) -> Result<()> {
+        let frame_id = self.make_frame_id(priority, topic, message_type, false)?;
 
         let tx_frame =
             EspTwaiFrame::new_remote(frame_id, 0).ok_or(anyhow!("Failed to create frame"))?;
@@ -346,7 +418,13 @@ impl CANTxWorker {
         Ok(())
     }
 
-    fn make_frame_id(&mut self, message_type: u32, use_seq: bool) -> Result<Id> {
+    fn make_frame_id(
+        &mut self,
+        priority: Priority,
+        topic: Topic,
+        message_type: u32,
+        use_seq: bool,
+    ) -> Result<Id> {
         let seq = if use_seq {
             if self.seq >= MAX_MESSAGE_SEQUENCE {
                 self.seq = 1;
@@ -359,7 +437,7 @@ impl CANTxWorker {
             0
         };
 
-        let msg_id = MessageId::new(self.device.clone(), message_type, seq);
+        let msg_id = MessageId::new(priority, seq, topic, message_type, self.device.clone());
         let extended_id: ExtendedId = msg_id.try_into()?;
 
         Ok(Id::Extended(extended_id))
@@ -368,33 +446,40 @@ impl CANTxWorker {
 
 // Utils
 
-/*
-    let device_type: u32 = 0x15;    // Max 0x1F  (32 values)
-    let device_id: u32 = 250;       // Max 0xFF  (256 values)
-    let message_type: u32 = 0x7E;   // Max 0x7F  (128 values)
-    let sequence_no: u32 = 2000;    // Max 0x7FF (2048 values)
-*/
-
 fn pack_msg_id(
-    device_type: u32,
-    device_id: u32,
-    message_type: u32,
-    sequence_no: u32,
+    priority: u32,     // 2 bits (0-3)
+    sequence_no: u32,  // 6 bits (0-63)
+    topic_type: u32,   // 5 bits (0-31)
+    message_type: u32, // 6 bits (0-63)
+    device_type: u32,  // 4 bits (0-15)
+    sender_id: u32,    // 6 bits (0-63)
 ) -> Result<ExtendedId> {
-    // Shift fields into position
-    let raw_id = (device_type << 24) | (device_id << 16) | (message_type << 11) | sequence_no;
+    let raw_id = (priority << 27)
+        | (sequence_no << 21)
+        | (topic_type << 16)
+        | (message_type << 10)
+        | (device_type << 6)
+        | sender_id;
 
     ExtendedId::new(raw_id).ok_or(anyhow!(CoreError::CANMsgIdExceeded))
 }
 
-fn unpack_msg_id(id: ExtendedId) -> (u32, u32, u32, u32) {
+fn unpack_msg_id(id: ExtendedId) -> (u32, u32, u32, u32, u32, u32) {
     let raw_id = id.as_raw();
 
-    // Mask out each field and shift them back down to zero
-    let device_type = (raw_id >> 24) & 0x1F; // 5 bits
-    let device_id = (raw_id >> 16) & 0xFF; // 8 bits
-    let message_type = (raw_id >> 11) & 0x7F; // 7 bits
-    let sequence_no = raw_id & 0x7FF; // 11 bits
+    let priority = (raw_id >> 27) & 0x3; // 2 bits
+    let sequence_no = (raw_id >> 21) & 0x3F; // 6 bits
+    let topic_type = (raw_id >> 16) & 0x1F; // 5 bits
+    let message_type = (raw_id >> 10) & 0x3F; // 6 bits
+    let device_type = (raw_id >> 6) & 0xF; // 4 bits
+    let sender_id = raw_id & 0x3F; // 6 bits
 
-    (device_type, device_id, message_type, sequence_no)
+    (
+        priority,
+        sequence_no,
+        topic_type,
+        message_type,
+        device_type,
+        sender_id,
+    )
 }

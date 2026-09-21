@@ -1,3 +1,4 @@
+use crate::common::CoreError;
 use num_enum::TryFromPrimitive;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
