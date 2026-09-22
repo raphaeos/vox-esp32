@@ -124,14 +124,14 @@ impl Into<Box<dyn Probe>> for ProbeType {
 }
 
 pub enum ProbeValue {
-    Volts(f32),
+    MilliVolts(f32),
     MilliAmps(f32),
 }
 
 impl ProbeValue {
     pub fn value(self) -> f32 {
         match self {
-            ProbeValue::Volts(val) => val,
+            ProbeValue::MilliVolts(val) => val,
             ProbeValue::MilliAmps(val) => val,
         }
     }
@@ -140,7 +140,7 @@ impl ProbeValue {
 impl Display for ProbeValue {
     fn fmt(&self, f: &mut core::fmt::Formatter) -> core::fmt::Result {
         match self {
-            ProbeValue::Volts(v) => write!(f, "{:.3} V", v),
+            ProbeValue::MilliVolts(mv) => write!(f, "{:.2} mV", mv),
             ProbeValue::MilliAmps(ma) => write!(f, "{:.2} mA", ma),
         }
     }
@@ -167,7 +167,7 @@ impl VoltageDividerProbe {
 impl Probe for VoltageDividerProbe {
     fn calculate(&self, raw_voltage: f32) -> Result<ProbeValue> {
         if self.multiplier > 0.0 {
-            let raw_corrected = raw_voltage + self.zero_offset;
+            let raw_corrected = (raw_voltage + self.zero_offset) * 1000.0;
             let val = (raw_corrected * self.multiplier) + self.zero_offset;
 
             log::trace!(
@@ -178,9 +178,9 @@ impl Probe for VoltageDividerProbe {
                 val
             );
 
-            Ok(ProbeValue::Volts(val))
+            Ok(ProbeValue::MilliVolts(val))
         } else {
-            Ok(ProbeValue::Volts(0.0))
+            Ok(ProbeValue::MilliVolts(0.0))
         }
     }
 }

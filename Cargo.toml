@@ -5,6 +5,7 @@ resolver = "2"
 [workspace.dependencies]
 # --- Workspace ---
 vox-esp32-core = { path = "vox-esp32-core" }
+vox-esp32-power = { path = "vox-esp32-power" }
 
 # --- Core ---
 log = "0.4"

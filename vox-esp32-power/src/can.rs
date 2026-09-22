@@ -1,30 +1,41 @@
-use alloc::borrow::ToOwned;
 use anyhow::{anyhow, Result};
-use async_channel::{bounded, Receiver, RecvError};
-use vox_esp32_core::esp32_can::{
-    CANManagerHandle, CANRxHandler, CANRxWorker, MessageId, Priority, Topic,
-};
+use async_channel::{bounded, Receiver};
+use vox_esp32_core::esp32_can::{CANManagerHandle, CANRxHandler, MessageId, Priority, Topic};
 use vox_esp32_core::Controller;
 
-use crate::metrics::Metrics;
-use num_enum::TryFromPrimitive;
-use vox_esp32_core::types::DeviceType;
+use crate::metrics::{Metrics, VAId, VAMetricEntry};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[repr(u32)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageType {
-    Metrics = 1,
+    VAMetricEntry(VAId),
 }
 
 impl MessageType {
     pub fn id(&self) -> u32 {
-        *self as u32
+        match self {
+            MessageType::VAMetricEntry(va_id) => 10 + (*va_id as u32),
+        }
+    }
+}
+
+impl TryFrom<u32> for MessageType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        if value >= 10 && value < 35 {
+            let va_id: u8 = (value - 10) as u8;
+            let va_id: VAId = va_id.try_into()?;
+
+            Ok(MessageType::VAMetricEntry(va_id))
+        } else {
+            Err(anyhow!("Invalid id {} for (Power) MessageType", value))
+        }
     }
 }
 
 #[derive(Debug)]
 pub enum Message {
-    Metrics(Metrics),
+    Metrics(VAMetricEntry),
 }
 
 pub fn register_handlers(
@@ -35,15 +46,14 @@ pub fn register_handlers(
 
     controller.add_can_handler(CANRxHandler::new(
         move |msg_id, payload| {
-            let message_type: MessageType = msg_id.message_type.try_into()?;
-
             match msg_id.topic {
                 Topic::Power => {
-                    let mut message: Option<Message> = None;
+                    let message_type: MessageType = msg_id.message_type.try_into()?;
+                    let message: Option<Message>;
                     match message_type {
-                        MessageType::Metrics => {
-                            let val: Metrics = postcard::from_bytes(payload)?;
-                            message = Some(Message::Metrics(val));
+                        MessageType::VAMetricEntry(va_id) => {
+                            message =
+                                Some(Message::Metrics(VAMetricEntry::from_bytes(va_id, payload)?));
                         }
                     }
 
@@ -78,31 +88,28 @@ pub fn register_handlers(
 }
 
 #[embassy_executor::task]
-async fn can_sender_task(metrics_rx: Receiver<Metrics>, mut can_handle: CANManagerHandle) {
+async fn can_sender_task(va_metric_rx: Receiver<VAMetricEntry>, mut can_handle: CANManagerHandle) {
     loop {
-        if let Err(e) = can_sender_worker(&metrics_rx, &mut can_handle).await {
+        if let Err(e) = can_sender_worker(&va_metric_rx, &mut can_handle).await {
             log::error!("CAN Sender Task: Error encountered in worker: {}", e);
         }
     }
 }
 
 async fn can_sender_worker(
-    metrics_rx: &Receiver<Metrics>,
+    va_metric_rx: &Receiver<VAMetricEntry>,
     can_handle: &mut CANManagerHandle,
 ) -> Result<()> {
-    let metrics = metrics_rx
+    let va_entry = va_metric_rx
         .recv()
         .await
         .map_err(|e| anyhow::anyhow!("CAN Sender Worker: Error receiving metrics: {}", e))?;
-
-    let data = postcard::to_allocvec(&metrics)?;
-
     can_handle
         .tx(
             Priority::Default,
             Topic::Power,
-            MessageType::Metrics.id(),
-            data,
+            MessageType::VAMetricEntry(va_entry.id).id(),
+            va_entry.to_bytes()?,
         )
         .await?;
 
@@ -111,10 +118,10 @@ async fn can_sender_worker(
 
 pub fn spawn_sender(
     controller: &mut Controller,
-    metrics_rx: Receiver<Metrics>,
+    va_metric_rx: Receiver<VAMetricEntry>,
     can_handle: CANManagerHandle,
 ) -> Result<()> {
-    controller.spawn(can_sender_task(metrics_rx, can_handle)?);
+    controller.spawn(can_sender_task(va_metric_rx, can_handle)?);
 
     Ok(())
 }

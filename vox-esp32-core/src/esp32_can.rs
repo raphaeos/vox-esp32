@@ -1,15 +1,17 @@
 use crate::common::CoreError;
+use crate::esp32_led::{LEDColor, LEDManagerHandle};
 use crate::types::{Device, DeviceType};
 use crate::Controller;
 use alloc::boxed::Box;
 use alloc::vec;
 use alloc::vec::Vec;
-use anyhow::{anyhow, Result};
-use async_channel::{bounded, Receiver, RecvError, Sender};
+use anyhow::{anyhow, Error, Result};
+use async_channel::{bounded, Receiver, SendError, Sender};
 use embassy_time::{Duration, Timer};
-use esp_hal::twai::{BaudRate, EspTwaiFrame, ExtendedId, Id, TwaiMode, TwaiRx, TwaiTx};
+use esp_hal::twai::{
+    BaudRate, EspTwaiError, EspTwaiFrame, ExtendedId, Id, TwaiMode, TwaiRx, TwaiTx,
+};
 use esp_hal::{twai, Async};
-use futures::future::{self};
 use futures::pin_mut;
 use futures::select_biased;
 use futures::FutureExt;
@@ -35,7 +37,7 @@ impl Priority {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
 #[repr(u32)]
 pub enum Topic {
-    None = 1,
+    Core = 1,
     Controller = 2,
     Power = 3,
     WaterHeater = 4,
@@ -44,6 +46,30 @@ pub enum Topic {
 impl Topic {
     pub fn id(&self) -> u32 {
         *self as u32
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u32)]
+pub enum MessageType {
+    Heartbeat = 1,
+}
+
+impl MessageType {
+    pub fn id(&self) -> u32 {
+        *self as u32
+    }
+}
+
+impl TryFrom<u32> for MessageType {
+    type Error = anyhow::Error;
+
+    fn try_from(value: u32) -> Result<Self, Self::Error> {
+        if value == 1 {
+            Ok(MessageType::Heartbeat)
+        } else {
+            Err(anyhow!("Invalid id {} for (Core) MessageType", value))
+        }
     }
 }
 
@@ -78,22 +104,22 @@ impl TryFrom<ExtendedId> for MessageId {
     type Error = CoreError;
 
     fn try_from(value: ExtendedId) -> Result<Self, Self::Error> {
-        let (priority, sequence_no, topic_type, message_type, device_type, sender_id) =
+        let (priority, sequence_no, topic_type, message_type, sender_type, sender_id) =
             unpack_msg_id(value);
 
         let priority = Priority::try_from(priority).map_err(|e| CoreError::Other(anyhow!(e)))?;
 
         let topic = Topic::try_from(topic_type).map_err(|e| CoreError::Other(anyhow!(e)))?;
 
-        let device_type =
-            DeviceType::try_from(device_type).map_err(|e| CoreError::Other(anyhow!(e)))?;
+        let sender_device_type =
+            DeviceType::try_from(sender_type).map_err(|e| CoreError::Other(anyhow!(e)))?;
 
         Ok(Self {
             priority,
             sequence_no,
             topic,
             message_type,
-            sender: Device::new(device_type, sender_id),
+            sender: Device::new(sender_device_type, sender_id),
         })
     }
 }
@@ -183,6 +209,11 @@ async fn can_tx_task(mut wkr: CANTxWorker) {
     wkr.run().await;
 }
 
+#[embassy_executor::task]
+async fn can_tx_job_task(mut wkr: CANTxJobWorker) {
+    wkr.run().await;
+}
+
 pub struct CANManager {
     handlers: Vec<CANRxHandler>,
 }
@@ -233,6 +264,8 @@ impl CANManager {
             controller.device.clone(),
             can_rx,
             self.handlers,
+            #[cfg(feature = "esp32s3-rgb-led")]
+            controller.led.clone(),
         ))?);
         controller.spawn(can_tx_task(CANTxWorker::new(
             controller.device.clone(),
@@ -240,6 +273,7 @@ impl CANManager {
             rx,
             rx_request,
         ))?);
+        controller.spawn(can_tx_job_task(CANTxJobWorker::new(tx.clone()))?);
 
         Ok(CANManagerHandle { tx, tx_request })
     }
@@ -249,14 +283,22 @@ pub struct CANRxWorker {
     device: Device,
     can_rx: TwaiRx<'static, Async>,
     handlers: Vec<CANRxHandler>,
+    #[cfg(feature = "esp32s3-rgb-led")]
+    pub led: LEDManagerHandle,
 }
 
 impl CANRxWorker {
-    fn new(device: Device, can_rx: TwaiRx<'static, Async>, handlers: Vec<CANRxHandler>) -> Self {
+    fn new(
+        device: Device,
+        can_rx: TwaiRx<'static, Async>,
+        handlers: Vec<CANRxHandler>,
+        #[cfg(feature = "esp32s3-rgb-led")] led: LEDManagerHandle,
+    ) -> Self {
         Self {
             device,
             can_rx,
             handlers,
+            led,
         }
     }
 
@@ -274,9 +316,19 @@ impl CANRxWorker {
                         log::error!("Failed to handle CAN frame: {}", e);
                     }
                 }
-                Err(e) => {
-                    log::error!("Error receiving CAN frame: {:?}", e);
-                }
+                Err(e) => match e {
+                    EspTwaiError::BusOff => {
+                        log::error!(
+                            "Error receiving CAN frame: {:?} (assuming no peers and waiting)",
+                            e
+                        );
+
+                        Timer::after(Duration::from_millis(1000)).await;
+                    }
+                    _ => {
+                        log::error!("Error receiving CAN frame: {:?}", e);
+                    }
+                },
             }
         }
     }
@@ -290,21 +342,43 @@ impl CANRxWorker {
                 return Ok(());
             }
 
-            for handler in self.handlers.iter_mut() {
-                if rx_frame.is_remote_request() {
-                    match handler.handle_request(&msg_id).await {
-                        Ok(true) => continue,
-                        Ok(false) => return Ok(()), // Abort chain.
-                        Err(e) => {
-                            log::error!("Failed to call handle_request to handle CAN frame: {}", e);
+            match msg_id.topic {
+                Topic::Core => {
+                    let message_type: MessageType = msg_id.message_type.try_into()?;
+                    match message_type {
+                        MessageType::Heartbeat => {
+                            log::debug!("Received CAN Heartbeat message from {:?}", msg_id.sender);
+
+                            self.led
+                                .once(LEDColor::Pink, None, Some(Duration::from_millis(100)), None)
+                                .await;
                         }
                     }
-                } else {
-                    match handler.handle(&msg_id, rx_frame.data()).await {
-                        Ok(true) => continue,
-                        Ok(false) => return Ok(()), // Abort chain.
-                        Err(e) => {
-                            log::error!("Failed to call handler to handle CAN frame: {}", e);
+                }
+                _ => {
+                    for handler in self.handlers.iter_mut() {
+                        if rx_frame.is_remote_request() {
+                            match handler.handle_request(&msg_id).await {
+                                Ok(true) => continue,
+                                Ok(false) => return Ok(()), // Abort chain.
+                                Err(e) => {
+                                    log::error!(
+                                        "Failed to call handle_request to handle CAN frame: {}",
+                                        e
+                                    );
+                                }
+                            }
+                        } else {
+                            match handler.handle(&msg_id, rx_frame.data()).await {
+                                Ok(true) => continue,
+                                Ok(false) => return Ok(()), // Abort chain.
+                                Err(e) => {
+                                    log::error!(
+                                        "Failed to call handler to handle CAN frame: {}",
+                                        e
+                                    );
+                                }
+                            }
                         }
                     }
                 }
@@ -410,12 +484,15 @@ impl CANTxWorker {
     }
 
     async fn send_can_frame(&mut self, frame: &EspTwaiFrame) -> Result<()> {
-        self.can_tx
-            .transmit_async(frame)
-            .await
-            .map_err(|e| anyhow!("Failed to transmit CAN frame: {:?}", e))?;
+        let tx_future = self.can_tx.transmit_async(frame);
 
-        Ok(())
+        match embassy_time::with_timeout(Duration::from_millis(5), tx_future).await {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(e)) => Err(anyhow!("Transmit async error: {:?}", e)),
+            Err(_) => Err(anyhow!(
+                "Transmit async error: Timeout (is the bus terminated?)"
+            )),
+        }
     }
 
     fn make_frame_id(
@@ -444,6 +521,35 @@ impl CANTxWorker {
     }
 }
 
+pub struct CANTxJobWorker {
+    tx: Sender<(Priority, Topic, u32, Vec<u8>)>,
+}
+
+impl CANTxJobWorker {
+    fn new(tx: Sender<(Priority, Topic, u32, Vec<u8>)>) -> Self {
+        Self { tx }
+    }
+
+    async fn run(&mut self) {
+        loop {
+            Timer::after(Duration::from_millis(1000)).await;
+
+            if let Err(e) = self
+                .tx
+                .send((
+                    Priority::Default,
+                    Topic::Core,
+                    MessageType::Heartbeat.id(),
+                    vec![],
+                ))
+                .await
+            {
+                log::error!("Failed to send CANTxWorker heartbeat (tx): {}", e);
+            }
+        }
+    }
+}
+
 // Utils
 
 fn pack_msg_id(
@@ -451,14 +557,14 @@ fn pack_msg_id(
     sequence_no: u32,  // 6 bits (0-63)
     topic_type: u32,   // 5 bits (0-31)
     message_type: u32, // 6 bits (0-63)
-    device_type: u32,  // 4 bits (0-15)
+    sender_type: u32,  // 4 bits (0-15)
     sender_id: u32,    // 6 bits (0-63)
 ) -> Result<ExtendedId> {
     let raw_id = (priority << 27)
         | (sequence_no << 21)
         | (topic_type << 16)
         | (message_type << 10)
-        | (device_type << 6)
+        | (sender_type << 6)
         | sender_id;
 
     ExtendedId::new(raw_id).ok_or(anyhow!(CoreError::CANMsgIdExceeded))
@@ -471,7 +577,7 @@ fn unpack_msg_id(id: ExtendedId) -> (u32, u32, u32, u32, u32, u32) {
     let sequence_no = (raw_id >> 21) & 0x3F; // 6 bits
     let topic_type = (raw_id >> 16) & 0x1F; // 5 bits
     let message_type = (raw_id >> 10) & 0x3F; // 6 bits
-    let device_type = (raw_id >> 6) & 0xF; // 4 bits
+    let sender_type = (raw_id >> 6) & 0xF; // 4 bits
     let sender_id = raw_id & 0x3F; // 6 bits
 
     (
@@ -479,7 +585,7 @@ fn unpack_msg_id(id: ExtendedId) -> (u32, u32, u32, u32, u32, u32) {
         sequence_no,
         topic_type,
         message_type,
-        device_type,
+        sender_type,
         sender_id,
     )
 }

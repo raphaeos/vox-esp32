@@ -1,6 +1,8 @@
 use crate::powmr_mppt::{MPPTError, MPPTErrorExt, MPPTManager, MPPTResult, MPPTState};
+use alloc::boxed::Box;
 use alloc::collections::BTreeMap;
-use anyhow::Result;
+use alloc::vec::Vec;
+use anyhow::{anyhow, Result};
 use async_channel::{bounded, Receiver, Sender};
 use core::fmt::{Debug, Display};
 use embassy_time::{Duration, Timer};
@@ -8,6 +10,7 @@ use embedded_ads111x::InputMultiplexer;
 use futures::pin_mut;
 use futures::select_biased;
 use futures::FutureExt;
+use num_enum::TryFromPrimitive;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
@@ -132,16 +135,29 @@ impl ProbeId {
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize)]
 pub enum VAType {
-    Pv,
     Batt,
+    Pv,
 }
 
-#[derive(Debug, Copy, Clone, PartialOrd, PartialEq, Ord, Eq, Serialize, Deserialize, EnumIter)]
+#[derive(
+    Debug,
+    Copy,
+    Clone,
+    PartialOrd,
+    PartialEq,
+    Ord,
+    Eq,
+    Serialize,
+    Deserialize,
+    EnumIter,
+    TryFromPrimitive,
+)]
+#[repr(u8)]
 pub enum VAId {
-    Pv1,
-    Pv2,
-    Pv3,
-    Batt,
+    Batt = 1,
+    Pv1 = 10,
+    Pv2 = 11,
+    Pv3 = 12,
 }
 
 impl VAId {
@@ -232,12 +248,13 @@ impl Metrics {
     }
 }
 
-#[derive(Error, Copy, Clone, Debug, Serialize, Deserialize)]
+#[derive(Error, Copy, Clone, Debug, Serialize, Deserialize, TryFromPrimitive)]
+#[repr(u8)]
 pub enum ProbeError {
     #[error("Read error")]
-    ReadError,
+    ReadError = 2,
     #[error("Conversion error")]
-    ConversionError,
+    ConversionError = 3,
 }
 
 #[derive(Copy, Clone, Debug, Serialize, Deserialize)]
@@ -247,12 +264,36 @@ pub enum ProbeStatus {
     Err(ProbeError),
 }
 
+impl Into<u8> for ProbeStatus {
+    fn into(self) -> u8 {
+        match self {
+            ProbeStatus::Init => 0,
+            ProbeStatus::Ok => 1,
+            ProbeStatus::Err(e) => e as u8,
+        }
+    }
+}
+
+impl TryFrom<u8> for ProbeStatus {
+    type Error = CoreError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(ProbeStatus::Init),
+            1 => Ok(ProbeStatus::Ok),
+            _ => Ok(ProbeStatus::Err(
+                ProbeError::try_from(value).map_err(|e| CoreError::Other(anyhow!(e)))?,
+            )),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct VAMetricEntry {
-    id: VAId,
-    status: ProbeStatus,
-    voltage: f32,
-    amperage: f32,
+    pub id: VAId,
+    pub status: ProbeStatus,
+    pub voltage: f32,
+    pub amperage: f32,
 }
 
 impl VAMetricEntry {
@@ -264,6 +305,48 @@ impl VAMetricEntry {
             amperage,
         }
     }
+
+    pub fn from_bytes(id: VAId, bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != 8 {
+            return Err(anyhow!("Expected 8 bytes, got {}", bytes.len()));
+        }
+
+        let status = ProbeStatus::try_from(bytes[0]).map_err(|e| CoreError::Other(anyhow!(e)))?;
+
+        let voltage = i32::from_le_bytes([bytes[1], bytes[2], bytes[3], 0]);
+        let amperage = i32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
+
+        Ok(Self {
+            id,
+            status,
+            voltage: voltage as f32,
+            amperage: amperage as f32,
+        })
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        const I24_MAX: i32 = 16_777_215;
+        const I24_MIN: i32 = -16_777_216;
+
+        let amperage: i32 = self.amperage as i32;
+        if amperage > I24_MAX || amperage < I24_MIN {
+            return Err(anyhow!(
+                "Amperage overflows beyond i24 (3 bytes): {}",
+                amperage
+            ));
+        }
+
+        let mut bytes = alloc::vec![0u8; 8];
+
+        bytes[0] = self.status.into();
+
+        // Take the first 3 bytes of the millivolts (a 3-byte integer (u24) can store values up to 16,777,215)
+        let v_bytes = (self.voltage as i32).to_le_bytes();
+        bytes[1..4].copy_from_slice(&v_bytes[0..3]);
+        bytes[4..8].copy_from_slice(&amperage.to_le_bytes());
+
+        Ok((bytes))
+    }
 }
 
 #[embassy_executor::task]
@@ -272,7 +355,8 @@ async fn metrics_task(mut mgr: MetricsManager) {
 }
 
 pub struct MetricsManager {
-    tx: Sender<Metrics>,
+    m_tx: Sender<Metrics>,
+    va_tx: Sender<VAMetricEntry>,
     mppt_rx: Receiver<MPPTResult<MPPTState>>,
     probe: ADSMultiProbe<ProbeId>,
     led: LEDManagerHandle,
@@ -286,7 +370,9 @@ enum ReadVAResult {
 }
 
 impl MetricsManager {
-    pub(crate) fn spawn(controller: &mut Controller) -> Result<Receiver<Metrics>> {
+    pub(crate) fn spawn(
+        controller: &mut Controller,
+    ) -> Result<(Receiver<Metrics>, Receiver<VAMetricEntry>)> {
         let mppt_rx = MPPTManager::spawn(controller)?;
 
         let sda = (&mut controller.peripherals.GPIO5)
@@ -310,12 +396,14 @@ impl MetricsManager {
             }
         }
 
-        let (tx, rx) = bounded(10);
+        let (m_tx, m_rx) = bounded(10);
+        let (va_tx, va_rx) = bounded(10);
 
         let led = controller.led.clone();
 
         let mgr = MetricsManager {
-            tx,
+            m_tx,
+            va_tx,
             mppt_rx,
             probe,
             led,
@@ -324,7 +412,7 @@ impl MetricsManager {
 
         controller.spawn(metrics_task(mgr)?);
 
-        Ok(rx)
+        Ok((m_rx, va_rx))
     }
 
     async fn run(&mut self) {
@@ -384,6 +472,8 @@ impl MetricsManager {
                             .update_va_status(va_id, ProbeStatus::Err(ProbeError::ConversionError));
                     }
                 }
+
+                self.tx_va(&va_id).await;
             }
         }
 
@@ -445,8 +535,16 @@ impl MetricsManager {
     }
 
     async fn tx_metrics(&self) {
-        if let Err(e) = self.tx.send(self.metrics.clone()).await {
-            log::error!("Failed to send metrics message: {:?}", e);
+        if let Err(e) = self.m_tx.send(self.metrics.clone()).await {
+            log::error!("Failed to send Metrics message: {:?}", e);
+        }
+    }
+
+    async fn tx_va(&self, va_id: &VAId) {
+        if let Some(va_val) = self.metrics.va_entries.get(va_id) {
+            if let Err(e) = self.va_tx.send(va_val.clone()).await {
+                log::error!("Failed to send VAMetricEntry message: {:?}", e);
+            }
         }
     }
 }

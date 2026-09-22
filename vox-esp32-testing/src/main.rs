@@ -9,6 +9,7 @@
 
 pub mod test_adc_voltage;
 pub mod test_ads1115;
+pub mod test_can;
 pub mod test_leds;
 
 extern crate alloc;
@@ -30,7 +31,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 )]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    let mut controller = vox_esp32_core::init(Device::new(DeviceType::None, 0), spawner)
+    let mut controller = vox_esp32_core::init(Device::new(DeviceType::None, 55), spawner)
         .expect("failed to initialize ESP controller");
 
     controller
@@ -52,5 +53,6 @@ async fn main(spawner: Spawner) -> ! {
 pub async fn run(controller: &mut Controller) -> anyhow::Result<()> {
     //test_leds::run(&mut controller).await;
     //test_adc_voltage::run(&mut controller).await;
-    test_ads1115::run(controller).await
+    //test_ads1115::run(controller).await
+    test_can::run(controller).await
 }

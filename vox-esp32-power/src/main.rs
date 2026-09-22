@@ -9,12 +9,11 @@
 extern crate alloc;
 
 use crate::can::{Message, MessageType};
-use crate::metrics::{Metrics, MetricsManager};
+use crate::metrics::{Metrics, MetricsManager, VAMetricEntry};
 use anyhow::Result;
 use async_channel::Receiver;
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
-use esp_hal::analog::adc::{AdcCalScheme, AdcHasCurveCal};
 use vox_esp32_core::esp32_can::MessageId;
 use vox_esp32_core::esp32_led::{LEDColor, LEDStatus};
 use vox_esp32_core::types::{Device, DeviceType};
@@ -64,10 +63,10 @@ async fn main(spawner: Spawner) -> ! {
     let mut controller = vox_esp32_core::init(Device::new(DeviceType::Power, 1), spawner)
         .expect("failed to initialize ESP controller");
 
-    let metrics_rx =
+    let (metrics_rx, va_metric_rx) =
         MetricsManager::spawn(&mut controller).expect("failed to spawn Power MetricsManager");
 
-    let can_rx = init_can(&mut controller, metrics_rx.clone())
+    let can_rx = init_can(&mut controller, va_metric_rx)
         .await
         .expect("Failed to init CAN");
 
@@ -90,13 +89,13 @@ async fn main(spawner: Spawner) -> ! {
 
 async fn init_can(
     controller: &mut Controller,
-    metrics_rx: Receiver<Metrics>,
+    va_metric_rx: Receiver<VAMetricEntry>,
 ) -> Result<Receiver<(MessageId, MessageType, Message)>> {
     let can_rx = can::register_handlers(controller)?;
 
     let handle = controller.start_can()?;
 
-    can::spawn_sender(controller, metrics_rx, handle)?;
+    can::spawn_sender(controller, va_metric_rx, handle)?;
 
     Ok(can_rx)
 }

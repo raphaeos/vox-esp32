@@ -37,3 +37,4 @@ embassy-executor.workspace = true
 embedded-ads111x.workspace = true
 
 vox-esp32-core = { workspace = true, features = ["esp32s3-adc", "ads111x"] }
+vox-esp32-power.workspace = true
