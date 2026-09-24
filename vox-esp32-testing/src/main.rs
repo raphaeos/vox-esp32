@@ -10,6 +10,7 @@
 pub mod test_adc_voltage;
 pub mod test_ads1115;
 pub mod test_can;
+pub mod test_lcd;
 pub mod test_leds;
 
 extern crate alloc;
@@ -54,5 +55,6 @@ pub async fn run(controller: &mut Controller) -> anyhow::Result<()> {
     //test_leds::run(&mut controller).await;
     //test_adc_voltage::run(&mut controller).await;
     //test_ads1115::run(controller).await
-    test_can::run(controller).await
+    //test_can::run(controller).await
+    test_lcd::run(controller).await
 }

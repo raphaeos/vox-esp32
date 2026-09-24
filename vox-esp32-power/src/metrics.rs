@@ -1,10 +1,9 @@
-use crate::powmr_mppt::{MPPTError, MPPTErrorExt, MPPTManager, MPPTResult, MPPTState};
-use alloc::boxed::Box;
+use crate::powmr_mppt::{MPPTManager, MPPTResult, MPPTState};
 use alloc::collections::BTreeMap;
 use alloc::vec::Vec;
 use anyhow::{anyhow, Result};
 use async_channel::{bounded, Receiver, Sender};
-use core::fmt::{Debug, Display};
+use core::fmt::Debug;
 use embassy_time::{Duration, Timer};
 use embedded_ads111x::InputMultiplexer;
 use futures::pin_mut;
@@ -16,7 +15,7 @@ use strum::IntoEnumIterator;
 use strum_macros::EnumIter;
 use thiserror::Error;
 use vox_esp32_core::ads111x::{
-    ADSMultiProbe, Address, ProbeType, ProbeValue, ACS758LCB_050B, QNHCK1_21_300_AMPS, V5_1,
+    ADSMultiProbe, Address, ProbeType, ACS758LCB_050B, QNHCK1_21_300_AMPS, V5_1,
 };
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::esp32_led::LEDManagerHandle;
@@ -201,16 +200,12 @@ impl VAId {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metrics {
     va_entries: BTreeMap<VAId, VAMetricEntry>,
-    mppt_state: Option<MPPTState>,
-    mppt_error: Option<MPPTErrorExt>,
 }
 
 impl Metrics {
     fn new() -> Self {
         Self {
             va_entries: BTreeMap::new(),
-            mppt_state: None,
-            mppt_error: None,
         }
     }
 
@@ -232,19 +227,6 @@ impl Metrics {
                 entry.status = status;
             })
             .or_insert_with(|| VAMetricEntry::new(id, status, 0.0, 0.0));
-    }
-
-    fn update_mppt(&mut self, res: MPPTResult<MPPTState>) {
-        match res {
-            Ok(state) => {
-                self.mppt_state = Some(state);
-                self.mppt_error = None;
-            }
-            Err(e) => {
-                self.mppt_error = Some(e.into());
-                self.mppt_state = None
-            }
-        }
     }
 }
 
@@ -357,7 +339,6 @@ async fn metrics_task(mut mgr: MetricsManager) {
 pub struct MetricsManager {
     m_tx: Sender<Metrics>,
     va_tx: Sender<VAMetricEntry>,
-    mppt_rx: Receiver<MPPTResult<MPPTState>>,
     probe: ADSMultiProbe<ProbeId>,
     led: LEDManagerHandle,
     metrics: Metrics,
@@ -373,8 +354,6 @@ impl MetricsManager {
     pub(crate) fn spawn(
         controller: &mut Controller,
     ) -> Result<(Receiver<Metrics>, Receiver<VAMetricEntry>)> {
-        let mppt_rx = MPPTManager::spawn(controller)?;
-
         let sda = (&mut controller.peripherals.GPIO5)
             .take()
             .ok_or(CoreError::PeripheralTaken("GPIO5"))?;
@@ -404,7 +383,6 @@ impl MetricsManager {
         let mgr = MetricsManager {
             m_tx,
             va_tx,
-            mppt_rx,
             probe,
             led,
             metrics: Metrics::new(),
@@ -419,35 +397,16 @@ impl MetricsManager {
         log::info!("Vox ESP32 Solar: Metrics Manager started");
 
         loop {
-            let mppt_rx_fut = self.mppt_rx.recv().fuse();
-
             let timeout_fut = Timer::after(Duration::from_millis(1000)).fuse();
 
-            pin_mut!(mppt_rx_fut, timeout_fut);
+            pin_mut!(timeout_fut);
 
             select_biased! {
-                msg_res = mppt_rx_fut => {
-                    match msg_res {
-                        Ok(msg) => {
-                            self.process_mppt_msg(msg).await;
-                        }
-                        Err(_) => {
-                            // Channel was closed, exit the loop safely
-                            break;
-                        }
-                    }
-                },
                 _ = timeout_fut => {
                     self.poll_probes().await;
                 }
             }
         }
-    }
-
-    async fn process_mppt_msg(&mut self, msg: MPPTResult<MPPTState>) {
-        self.metrics.update_mppt(msg);
-
-        self.tx_metrics().await;
     }
 
     async fn poll_probes(&mut self) {

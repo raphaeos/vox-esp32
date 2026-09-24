@@ -28,6 +28,7 @@ thiserror.workspace = true
 anyhow.workspace = true
 strum.workspace = true
 strum_macros.workspace = true
+num-traits.workspace = true
 esp-hal.workspace = true
 esp-rtos.workspace = true
 esp-bootloader-esp-idf.workspace = true
@@ -35,6 +36,11 @@ esp-println.workspace = true
 embassy-time.workspace = true
 embassy-executor.workspace = true
 embedded-ads111x.workspace = true
+embedded-hal-bus.workspace = true
+
+embedded-graphics.workspace = true
+lcd-async.workspace = true
+ft6336u-dd.workspace = true
 
 vox-esp32-core = { workspace = true, features = ["esp32s3-adc", "ads111x"] }
 vox-esp32-power.workspace = true

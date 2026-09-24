@@ -1,6 +1,8 @@
+use crate::metrics::{ProbeStatus, VAId};
 use alloc::format;
 use alloc::string::String;
-use anyhow::Result;
+use alloc::vec::Vec;
+use anyhow::{anyhow, Result};
 use async_channel::{bounded, Receiver, Sender};
 use core::fmt::{Display, Formatter};
 use embassy_time::Duration;
@@ -33,35 +35,6 @@ pub enum MPPTError {
     UnknownBatteryTypeIdx(u8),
     #[error("Error: {0}")]
     Other(#[from] anyhow::Error),
-}
-
-#[derive(Error, Debug, Clone, Serialize, Deserialize)]
-pub enum MPPTErrorExt {
-    #[error("Timed-out waiting for heartbeat from MPPT parallel communications")]
-    TimeOut,
-    #[error("Read error")]
-    ReadError,
-    #[error("Non-sync frame from MPPT parallel communications")]
-    NonSyncFrame,
-    #[error("CRC Miss-match in MPPT parallel communications")]
-    CrcMissMatch,
-    #[error("Unknown battery type idx: {0}")]
-    UnknownBatteryTypeIdx(u8),
-    #[error("Error: {0}")]
-    Other(String),
-}
-
-impl From<MPPTError> for MPPTErrorExt {
-    fn from(error: MPPTError) -> Self {
-        match error {
-            MPPTError::TimeOut => MPPTErrorExt::TimeOut,
-            MPPTError::ReadError(_) => MPPTErrorExt::ReadError,
-            MPPTError::NonSyncFrame => MPPTErrorExt::NonSyncFrame,
-            MPPTError::CrcMissMatch => MPPTErrorExt::CrcMissMatch,
-            MPPTError::UnknownBatteryTypeIdx(idx) => MPPTErrorExt::UnknownBatteryTypeIdx(idx),
-            MPPTError::Other(e) => MPPTErrorExt::Other(format!("{:?}", e)),
-        }
-    }
 }
 
 // Define your custom strict Result type
@@ -177,6 +150,161 @@ impl Display for MPPTState {
         } else {
             write!(f, "MPPTState[master_id: {}, battery_voltage: {:.1} V, SOC: {} %, battery_type: {}, user_config: None]",
                    self.master_id, self.battery_voltage(), self.soc(), self.battery_type.name())
+        }
+    }
+}
+
+#[derive(Error, Copy, Clone, Debug, Serialize, Deserialize, TryFromPrimitive)]
+#[repr(u8)]
+pub enum MPPTSummaryError {
+    #[error("Timed-out waiting for heartbeat from MPPT parallel communications")]
+    TimeOut = 2,
+    #[error("Read error")]
+    ReadError = 3,
+    #[error("Non-sync frame from MPPT parallel communications")]
+    NonSyncFrame = 4,
+    #[error("CRC Miss-match in MPPT parallel communications")]
+    CrcMissMatch = 5,
+    #[error("Unknown battery type idx")]
+    UnknownBatteryTypeIdx = 6,
+    #[error("General error")]
+    Other = 7,
+}
+
+impl From<MPPTError> for MPPTSummaryError {
+    fn from(value: MPPTError) -> Self {
+        match value {
+            MPPTError::TimeOut => MPPTSummaryError::TimeOut,
+            MPPTError::ReadError(_) => MPPTSummaryError::ReadError,
+            MPPTError::NonSyncFrame => MPPTSummaryError::NonSyncFrame,
+            MPPTError::CrcMissMatch => MPPTSummaryError::CrcMissMatch,
+            MPPTError::UnknownBatteryTypeIdx(_) => MPPTSummaryError::UnknownBatteryTypeIdx,
+            MPPTError::Other(_) => MPPTSummaryError::Other,
+        }
+    }
+}
+
+#[derive(Copy, Clone, Debug, Serialize, Deserialize)]
+pub enum MPPTSummaryStatus {
+    Init,
+    Err(MPPTSummaryError),
+    Ok(BatteryType),
+}
+
+impl Into<u8> for MPPTSummaryStatus {
+    fn into(self) -> u8 {
+        match self {
+            MPPTSummaryStatus::Init => 0,
+            MPPTSummaryStatus::Err(e) => e as u8,
+            MPPTSummaryStatus::Ok(batt) => batt as u8 + 30,
+        }
+    }
+}
+
+impl TryFrom<u8> for MPPTSummaryStatus {
+    type Error = CoreError;
+
+    fn try_from(value: u8) -> Result<Self, Self::Error> {
+        match value {
+            0 => Ok(MPPTSummaryStatus::Init),
+            v if v >= 30 => Ok(MPPTSummaryStatus::Ok(
+                BatteryType::try_from(v - 30).map_err(|e| CoreError::Other(anyhow!(e)))?,
+            )),
+            v => Ok(MPPTSummaryStatus::Err(
+                MPPTSummaryError::try_from(v).map_err(|e| CoreError::Other(anyhow!(e)))?,
+            )),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MPPTSummary {
+    pub status: MPPTSummaryStatus,
+    pub master_id: u8,
+    pub battery_voltage: u16,
+    pub boost_voltage: Option<u16>,
+    pub float_voltage: Option<u16>,
+}
+
+impl MPPTSummary {
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self> {
+        if bytes.len() != 8 {
+            return Err(anyhow!("Expected 8 bytes, got {}", bytes.len()));
+        }
+
+        let status =
+            MPPTSummaryStatus::try_from(bytes[0]).map_err(|e| CoreError::Other(anyhow!(e)))?;
+        let master_id = bytes[1];
+
+        let battery_voltage = u16::from_be_bytes([bytes[2], bytes[3]]);
+        let boost_voltage = u16::from_be_bytes([bytes[4], bytes[5]]);
+        let float_voltage = u16::from_be_bytes([bytes[6], bytes[7]]);
+
+        Ok(Self {
+            status,
+            master_id,
+            battery_voltage,
+            boost_voltage: if boost_voltage == 0 {
+                None
+            } else {
+                Some(boost_voltage)
+            },
+            float_voltage: if float_voltage == 0 {
+                None
+            } else {
+                Some(float_voltage)
+            },
+        })
+    }
+
+    pub fn to_bytes(&self) -> Result<Vec<u8>> {
+        let mut bytes = alloc::vec![0u8; 8];
+
+        bytes[0] = self.status.into();
+
+        if let MPPTSummaryStatus::Ok(battery_type) = self.status {
+            bytes[1] = self.master_id;
+            bytes[2..4].copy_from_slice(&self.battery_voltage.to_be_bytes());
+
+            if let Some(boost_voltage) = self.boost_voltage {
+                bytes[4..6].copy_from_slice(&boost_voltage.to_be_bytes());
+            }
+            if let Some(float_voltage) = self.float_voltage {
+                bytes[6..8].copy_from_slice(&float_voltage.to_be_bytes());
+            }
+        }
+
+        Ok((bytes))
+    }
+}
+
+impl From<MPPTResult<MPPTState>> for MPPTSummary {
+    fn from(value: MPPTResult<MPPTState>) -> Self {
+        match value {
+            Ok(value) => {
+                let mut boost_voltage: Option<u16> = None;
+                let mut float_voltage: Option<u16> = None;
+
+                if let Some(cfg) = value.user_config {
+                    boost_voltage = Some(cfg.boost_voltage);
+                    float_voltage = Some(cfg.float_voltage);
+                }
+
+                Self {
+                    status: MPPTSummaryStatus::Ok(value.battery_type),
+                    master_id: value.master_id,
+                    battery_voltage: value.battery_voltage,
+                    boost_voltage,
+                    float_voltage,
+                }
+            }
+            Err(e) => Self {
+                status: MPPTSummaryStatus::Err(e.into()),
+                master_id: 0,
+                battery_voltage: 0,
+                boost_voltage: None,
+                float_voltage: None,
+            },
         }
     }
 }

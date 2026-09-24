@@ -10,6 +10,7 @@ extern crate alloc;
 
 use crate::can::{Message, MessageType};
 use crate::metrics::{Metrics, MetricsManager, VAMetricEntry};
+use crate::powmr_mppt::{MPPTManager, MPPTResult, MPPTState};
 use anyhow::Result;
 use async_channel::Receiver;
 use embassy_executor::Spawner;
@@ -66,7 +67,9 @@ async fn main(spawner: Spawner) -> ! {
     let (metrics_rx, va_metric_rx) =
         MetricsManager::spawn(&mut controller).expect("failed to spawn Power MetricsManager");
 
-    let can_rx = init_can(&mut controller, va_metric_rx)
+    let mppt_rx = MPPTManager::spawn(&mut controller).expect("failed to spawn MPPTManager");
+
+    let can_rx = init_can(&mut controller, va_metric_rx, mppt_rx)
         .await
         .expect("Failed to init CAN");
 
@@ -90,12 +93,13 @@ async fn main(spawner: Spawner) -> ! {
 async fn init_can(
     controller: &mut Controller,
     va_metric_rx: Receiver<VAMetricEntry>,
+    mppt_rx: Receiver<MPPTResult<MPPTState>>,
 ) -> Result<Receiver<(MessageId, MessageType, Message)>> {
     let can_rx = can::register_handlers(controller)?;
 
     let handle = controller.start_can()?;
 
-    can::spawn_sender(controller, va_metric_rx, handle)?;
+    can::spawn_sender(controller, va_metric_rx, mppt_rx, handle)?;
 
     Ok(can_rx)
 }
