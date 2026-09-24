@@ -7,9 +7,17 @@
 )]
 #![deny(clippy::large_stack_frames)]
 
+pub mod display;
+pub mod ui;
+
+extern crate alloc;
+
 use embassy_executor::Spawner;
 use embassy_time::{Duration, Timer};
+use esp_hal::system::software_reset;
+use vox_esp32_core::esp32_led::{LEDColor, LEDStatus};
 use vox_esp32_core::types::{Device, DeviceType};
+use vox_esp32_core::Controller;
 
 // This creates a default app-descriptor required by the esp-idf bootloader.
 // For more information see: <https://docs.espressif.com/projects/esp-idf/en/stable/esp32/api-reference/system/app_image_format.html#application-description>
@@ -22,15 +30,32 @@ esp_bootloader_esp_idf::esp_app_desc!();
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let mut controller = vox_esp32_core::init(
-        Device::new(DeviceType::None, 0),
+        Device::new(DeviceType::None, 55),
         spawner,
         Some(esp_hal::time::Duration::from_millis(2000)),
     )
     .expect("failed to initialize ESP controller");
 
-    loop {
-        controller.feed();
+    controller
+        .led
+        .set(Some(LEDColor::Green), Some(LEDStatus::Blink), None, None)
+        .await;
 
-        Timer::after(Duration::from_secs(1)).await;
+    log::info!("Vox ESP32 Control: Started");
+
+    if let Err(e) = run(&mut controller).await {
+        log::error!("Error in main: {:?}", e);
     }
+
+    log::warn!("Main loop terminated, rebooting in 5s ...");
+    Timer::after(Duration::from_millis(5000)).await;
+    software_reset();
+}
+
+pub async fn run(controller: &mut Controller) -> anyhow::Result<()> {
+    //test_leds::run(&mut controller).await;
+    //test_adc_voltage::run(&mut controller).await;
+    //test_ads1115::run(controller).await
+    //test_can::run(controller).await
+    display::run(controller).await
 }

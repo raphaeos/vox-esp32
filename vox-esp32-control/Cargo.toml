@@ -1,0 +1,50 @@
+[package]
+name = "vox-esp32-control"
+version = "0.1.0"
+authors = ["Raph <iam@raphaeos.com>"]
+edition = "2021"
+resolver = "2"
+rust-version = "1.82"
+
+[[bin]]
+name = "vox-esp32-control"
+harness = false # do not use the built-in cargo test harness -> resolve rust-analyzer errors
+
+# For fine tuning these settings, please refer to https://doc.rust-lang.org/cargo/reference/profiles.html
+[profile.dev]
+# The default debug profile is too slow and too big for resource-constrained devices.
+# Always build with some optimizations enabled.
+opt-level = "s"
+
+[profile.release]
+codegen-units = 1     # LLVM can perform better optimizations using a single thread
+debug = 2     # prefer slower builds but better debugging experience
+lto = 'fat'
+opt-level = 's'
+
+[dependencies]
+log.workspace = true
+thiserror.workspace = true
+anyhow.workspace = true
+strum.workspace = true
+strum_macros.workspace = true
+num-traits.workspace = true
+libm.workspace = true
+esp-hal.workspace = true
+esp-rtos.workspace = true
+esp-bootloader-esp-idf.workspace = true
+esp-println.workspace = true
+embassy-time.workspace = true
+embassy-executor.workspace = true
+embedded-hal-bus.workspace = true
+
+embedded-graphics.workspace = true
+lcd-async.workspace = true
+ft6336u-dd.workspace = true
+slint.workspace = true
+
+vox-esp32-core = { workspace = true, features = ["esp32s3-adc", "ads111x"] }
+vox-esp32-power.workspace = true
+
+[build-dependencies]
+slint-build.workspace = true

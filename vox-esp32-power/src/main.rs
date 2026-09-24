@@ -61,8 +61,12 @@ esp_bootloader_esp_idf::esp_app_desc!();
 )]
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
-    let mut controller = vox_esp32_core::init(Device::new(DeviceType::Power, 1), spawner)
-        .expect("failed to initialize ESP controller");
+    let mut controller = vox_esp32_core::init(
+        Device::new(DeviceType::Power, 1),
+        spawner,
+        Some(esp_hal::time::Duration::from_millis(2000)),
+    )
+    .expect("failed to initialize ESP controller");
 
     let (metrics_rx, va_metric_rx) =
         MetricsManager::spawn(&mut controller).expect("failed to spawn Power MetricsManager");
@@ -86,6 +90,7 @@ async fn main(spawner: Spawner) -> ! {
             Err(e) => log::error!("Power Metrics Recv Error: {}", e),
         }
 
+        controller.feed();
         Timer::after(Duration::from_millis(1000)).await;
     }
 }

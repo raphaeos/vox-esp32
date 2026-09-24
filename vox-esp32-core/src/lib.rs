@@ -24,12 +24,15 @@ pub mod types;
 pub use controller::Controller;
 pub use esp32::Peripherals;
 
-use crate::types::Device;
 use anyhow::Result;
 use core::panic::PanicInfo;
 use embassy_executor::Spawner;
 use embedded_hal::delay::DelayNs;
+#[cfg(feature = "esp32s3-can")]
+pub use esp32_can::{CANManagerHandle, CANRxHandler, MessageId, MessageType};
+use esp_hal::time::Duration;
 use esp_hal::{delay::Delay, system::software_reset};
+pub use types::*;
 
 #[panic_handler]
 fn panic(info: &PanicInfo) -> ! {
@@ -42,10 +45,10 @@ fn panic(info: &PanicInfo) -> ! {
     software_reset();
 }
 
-pub fn init(device: Device, spawner: Spawner) -> Result<Controller> {
+pub fn init(device: Device, spawner: Spawner, wdt_timeout: Option<Duration>) -> Result<Controller> {
     esp_println::logger::init_logger_from_env();
 
     log::info!("Vox ESP32 Core: Initializing");
 
-    Controller::setup(device, spawner)
+    Controller::setup(device, spawner, wdt_timeout)
 }

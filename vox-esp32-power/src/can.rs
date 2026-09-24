@@ -3,8 +3,8 @@ use async_channel::{bounded, Receiver};
 use futures::pin_mut;
 use futures::select_biased;
 use futures::FutureExt;
-use vox_esp32_core::esp32_can::{CANManagerHandle, CANRxHandler, MessageId, Priority, Topic};
 use vox_esp32_core::Controller;
+use vox_esp32_core::{CANManagerHandle, CANRxHandler, MessageId, Priority, Topic};
 
 use crate::metrics::{VAId, VAMetricEntry};
 use crate::powmr_mppt::{MPPTResult, MPPTState, MPPTSummary};

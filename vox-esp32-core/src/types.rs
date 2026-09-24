@@ -1,3 +1,4 @@
+use anyhow::anyhow;
 use num_enum::TryFromPrimitive;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
@@ -27,5 +28,35 @@ impl Device {
             device_id,
             device_type,
         }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[repr(u32)]
+pub enum Priority {
+    Highest = 0,
+    High = 1,
+    Default = 2,
+    Lowest = 3,
+}
+
+impl Priority {
+    pub fn id(&self) -> u32 {
+        *self as u32
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
+#[repr(u32)]
+pub enum Topic {
+    Core = 1,
+    Controller = 2,
+    Power = 3,
+    WaterHeater = 4,
+}
+
+impl Topic {
+    pub fn id(&self) -> u32 {
+        *self as u32
     }
 }

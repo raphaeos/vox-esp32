@@ -1,5 +1,5 @@
 [workspace]
-members = ["vox-esp32-core", "vox-esp32-blank", "vox-esp32-testing", "vox-esp32-power"]
+members = ["vox-esp32-core", "vox-esp32-blank", "vox-esp32-testing", "vox-esp32-power", "vox-esp32-control"]
 resolver = "2"
 
 [workspace.dependencies]
@@ -37,7 +37,8 @@ futures = { version = "0.3", default-features = false, features = ["alloc", "asy
 nb = "1.1.0"
 
 # --- Math & Data Parsing (No Standard Library) ---
-num-traits = { version = "0.2.19", default-features = false }
+num-traits = { version = "0.2", default-features = false, features = ["libm"] }
+libm = "0.2.16"
 heapless = "0.9.3"         # Fixed-capacity collections (Vec, String, Map) with NO heap allocation
 serde = { version = "1.0.229", default-features = false, features = ["derive"] }
 postcard = { version = "1.1.3", default-features = false, features = ["alloc"] }
@@ -50,6 +51,22 @@ ft6336u-dd = "0.2.0"
 display-interface-spi = "0.5.0"
 smart-leds = "0.4.0"
 smart-leds-trait = "0.3.2"
+slint = { path = "../slint/api/rs/slint", default-features = false, features = [
+    "compat-1-2",
+    "unsafe-single-threaded", # Required for no_std single-core operation
+    "software-renderer-path",
+    "renderer-software", # Enables MinimalSoftwareWindow
+    "image-default-formats",
+    "libm"                    # Math backend for bare-metal
+] }
+slint-build = {
+    path = "../slint/api/rs/build",
+    features = [
+        "compat-1-18",
+        "renderer-software",
+        "image-default-formats",
+    ]
+}
 
 # --- Cryptography & Security (Off-Grid Messaging) ---
 chacha20poly1305 = { version = "0.11.0", default-features = false, features = ["alloc"] } # Fast authenticated encryption

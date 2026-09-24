@@ -1,6 +1,6 @@
 use crate::common::CoreError;
 use crate::esp32_led::{LEDColor, LEDManagerHandle};
-use crate::types::{Device, DeviceType};
+use crate::types::{Device, DeviceType, Priority, Topic};
 use crate::Controller;
 use alloc::boxed::Box;
 use alloc::vec;
@@ -19,36 +19,6 @@ use num_enum::TryFromPrimitive;
 
 const MAX_MESSAGE_SEQUENCE: u32 = 63;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[repr(u32)]
-pub enum Priority {
-    Highest = 0,
-    High = 1,
-    Default = 2,
-    Lowest = 3,
-}
-
-impl Priority {
-    pub fn id(&self) -> u32 {
-        *self as u32
-    }
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq, TryFromPrimitive)]
-#[repr(u32)]
-pub enum Topic {
-    Core = 1,
-    Controller = 2,
-    Power = 3,
-    WaterHeater = 4,
-}
-
-impl Topic {
-    pub fn id(&self) -> u32 {
-        *self as u32
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u32)]
 pub enum MessageType {
@@ -64,7 +34,7 @@ impl MessageType {
 impl TryFrom<u32> for MessageType {
     type Error = anyhow::Error;
 
-    fn try_from(value: u32) -> Result<Self, Self::Error> {
+    fn try_from(value: u32) -> anyhow::Result<Self, Self::Error> {
         if value == 1 {
             Ok(MessageType::Heartbeat)
         } else {

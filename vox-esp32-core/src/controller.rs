@@ -4,7 +4,9 @@ use embassy_executor::{SpawnToken, Spawner};
 use esp_hal::clock::CpuClock;
 use esp_hal::gpio;
 use esp_hal::gpio::InputConfig;
-use esp_hal::timer::timg::TimerGroup;
+use esp_hal::peripherals::TIMG0;
+use esp_hal::time::Duration;
+use esp_hal::timer::timg::{MwdtStage, TimerGroup, Wdt};
 
 use crate::esp32::Peripherals;
 use crate::esp32_can::{CANManager, CANManagerHandle, CANRxHandler};
@@ -23,6 +25,7 @@ pub struct Controller {
     spawner: Spawner,
     #[cfg(feature = "esp32s3-can")]
     can_mgr: Option<CANManager>,
+    wdt: Wdt<TIMG0<'static>>,
 }
 
 impl Controller {
@@ -30,6 +33,7 @@ impl Controller {
         device: Device,
         spawner: Spawner,
         mut peripherals: Peripherals,
+        wdt: Wdt<TIMG0<'static>>,
     ) -> Result<Self> {
         let boot_config = InputConfig::default().with_pull(gpio::Pull::Up);
 
@@ -56,10 +60,15 @@ impl Controller {
             led,
             #[cfg(feature = "esp32s3-can")]
             can_mgr,
+            wdt,
         })
     }
 
-    pub(crate) fn setup(device: Device, spawner: Spawner) -> Result<Self> {
+    pub(crate) fn setup(
+        device: Device,
+        spawner: Spawner,
+        wdt_timeout: Option<Duration>,
+    ) -> Result<Self> {
         let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
         let mut peripherals = Peripherals::new(esp_hal::init(config));
 
@@ -75,6 +84,16 @@ impl Controller {
                 .ok_or(CoreError::PeripheralTaken("TIMG0"))?,
         );
 
+        // Enable watch dog timer
+        let mut wdt = timg0.wdt;
+
+        if let Some(duration) = wdt_timeout {
+            wdt.set_timeout(MwdtStage::Stage0, duration);
+            wdt.enable();
+        } else {
+            log::warn!("Wdt timeout is disabled");
+        }
+
         esp_rtos::start(
             timg0.timer0,
             peripherals
@@ -83,7 +102,7 @@ impl Controller {
                 .ok_or(CoreError::PeripheralTaken("FROM_CPU_INTR0"))?,
         );
 
-        Self::new(device, spawner, peripherals)
+        Self::new(device, spawner, peripherals, wdt)
     }
 
     pub fn spawn<S>(&self, token: SpawnToken<S>) {
@@ -110,5 +129,9 @@ impl Controller {
                 "Failed to start CAN: can_mgr has already been taken!"
             ))
         }
+    }
+
+    pub fn feed(&mut self) {
+        self.wdt.feed();
     }
 }
