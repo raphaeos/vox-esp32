@@ -5,7 +5,7 @@ use num_enum::TryFromPrimitive;
 #[repr(u32)]
 pub enum DeviceType {
     None = 1,
-    Controller = 2,
+    Control = 2,
     Power = 3,
     WaterHeater = 4,
 }
@@ -50,9 +50,9 @@ impl Priority {
 #[repr(u32)]
 pub enum Topic {
     Core = 1,
-    Controller = 2,
+    Control = 2,
     Power = 3,
-    WaterHeater = 4,
+    Water = 4,
 }
 
 impl Topic {

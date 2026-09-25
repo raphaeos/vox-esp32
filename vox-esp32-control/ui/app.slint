@@ -5,16 +5,21 @@ import "assets/NotoSans-Regular.ttf";
 export component AppWindow inherits Window {
     width: 480px;
     height: 320px;
+    full-screen: true;
     default-font-family: "Noto Sans";
+    background: #000000;
 
-    VerticalBox {
-        Text {
-            font-size: 20px;
-            text: "Hello World!";
-        }
+    Image {
+        source: @image-url("assets/background1-480x320.jpeg");
+        width: parent.width;
+        height: parent.height;
+        image-fit: cover;
+    }
 
-        AboutSlint {
-            preferred-height: 150px;
-        }
+    Text {
+        x: 30px;
+        y: 30px;
+        font-size: 30px;
+        text: "Hello World!";
     }
 }

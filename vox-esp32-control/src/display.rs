@@ -38,34 +38,40 @@ use alloc::vec::Vec;
 use anyhow::Result;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
+use esp_hal::gpio::Pin;
 use esp_hal::gpio::{Input, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
 use esp_hal::{
     gpio::{Level, Output, OutputConfig},
+    ledc::{
+        channel::{self, ChannelIFace},
+        timer::{self, TimerIFace},
+        LSGlobalClkSource, Ledc, LowSpeed,
+    },
     spi::{
         master::{Config, Spi},
         Mode,
     },
+    time::Rate,
     Async,
 };
-use ft6336u_dd::{Ft6336u, Ft6336uAsync, Ft6336uInterface};
+use ft6336u_dd::{Ft6336uAsync, Ft6336uInterface};
 use lcd_async::interface::SpiInterface;
 use lcd_async::models::ST7796;
 use lcd_async::{Builder, Display};
-use num_traits::float::FloatCore;
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::Controller;
 
 use crate::ui::AppWindow;
 use core::ops::Range;
-use lcd_async::options::{Orientation, Rotation};
+use esp_hal::ledc::channel::Channel;
+use lcd_async::options::{ColorOrder, Orientation, Rotation};
 use slint::platform::{
-    software_renderer::{
-        LineBufferProvider, MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel,
-    },
+    software_renderer::{LineBufferProvider, MinimalSoftwareWindow, Rgb565Pixel},
     PointerEventButton, WindowEvent,
 };
 use slint::LogicalPosition;
+use static_cell::StaticCell;
 
 pub type DisplayAdapter = Display<
     SpiInterface<ExclusiveDevice<Spi<'static, Async>, Output<'static>, Delay>, Output<'static>>,
@@ -74,6 +80,8 @@ pub type DisplayAdapter = Display<
 >;
 pub type TouchAdapter =
     Ft6336uAsync<Ft6336uInterface<I2c<'static, Async>>, esp_hal::i2c::master::Error>;
+
+static LEDC_TIMER: StaticCell<timer::Timer<'static, LowSpeed>> = StaticCell::new();
 
 pub const DISPLAY_WIDTH: u16 = 320;
 pub const DISPLAY_HEIGHT: u16 = 480;
@@ -100,7 +108,9 @@ impl<'a> LineBufferProvider for Framebuffer<'a> {
     }
 }
 
-async fn init_display(controller: &mut Controller) -> Result<(DisplayAdapter, Output<'static>)> {
+async fn init_display(
+    controller: &mut Controller,
+) -> Result<(DisplayAdapter, Channel<'static, LowSpeed>)> {
     let device_delay = Delay;
     let mut init_delay = Delay;
 
@@ -132,18 +142,44 @@ async fn init_display(controller: &mut Controller) -> Result<(DisplayAdapter, Ou
         Level::Low,
         OutputConfig::default(),
     );
-    let mut tft_bl = Output::new(
+    let bl_pin = controller
+        .peripherals
+        .GPIO39
+        .take()
+        .ok_or(CoreError::PeripheralTaken("GPIO39"))?
+        .degrade();
+
+    let mut ledc = Ledc::new(
         controller
             .peripherals
-            .GPIO39
+            .LEDC
             .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO39"))?,
-        Level::Low,
-        OutputConfig::default(),
-    ); // Backlight ON
+            .ok_or(CoreError::PeripheralTaken("LEDC"))?,
+    );
+    ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
+
+    let mut timer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
+    timer0
+        .configure(timer::config::Config {
+            duty: timer::config::Duty::Duty10Bit, // 0 to 1023 resolution steps
+            clock_source: timer::LSClockSource::APBClk,
+            frequency: Rate::from_khz(50),
+        })
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    let static_timer = LEDC_TIMER.init(timer0);
+
+    let mut tft_bl = ledc.channel(channel::Number::Channel0, bl_pin);
+    tft_bl
+        .configure(channel::config::Config {
+            timer: static_timer,
+            duty_pct: 0, // Turn off to begin with.
+            drive_mode: esp_hal::gpio::DriveMode::PushPull,
+        })
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
     let spi_config = Config::default()
-        .with_frequency(esp_hal::time::Rate::from_mhz(40))
+        .with_frequency(Rate::from_mhz(40))
         .with_mode(Mode::_0);
 
     let spi = Spi::new(
@@ -174,6 +210,7 @@ async fn init_display(controller: &mut Controller) -> Result<(DisplayAdapter, Ou
 
     let mut display = Builder::new(ST7796, di)
         .reset_pin(tft_rst)
+        .color_order(ColorOrder::Bgr)
         .display_size(DISPLAY_WIDTH, DISPLAY_HEIGHT)
         .init(&mut init_delay)
         .await
@@ -200,7 +237,7 @@ async fn init_touch(controller: &mut Controller) -> Result<(TouchAdapter, Input<
     ctp_rst.set_high(); // Release reset line
     Timer::after(Duration::from_millis(50)).await;
 
-    let i2c_config = I2cConfig::default().with_frequency(esp_hal::time::Rate::from_khz(400)); // Standard Fast-Mode I2C
+    let i2c_config = I2cConfig::default().with_frequency(Rate::from_khz(400)); // Standard Fast-Mode I2C
 
     let i2c = I2c::new(
         (&mut controller.peripherals.I2C0)
@@ -268,10 +305,6 @@ pub async fn run(
         });
 
         if ui_did_render {
-            // Upload the framebuffer asynchronously.
-            //
-            // Rgb565Pixel is a 16-bit RGB565 pixel. This converts the framebuffer
-            // to the byte slice expected by lcd_async.
             let raw_render_bytes = unsafe {
                 core::slice::from_raw_parts(
                     render_buffer.as_ptr() as *const u8,
@@ -279,16 +312,9 @@ pub async fn run(
                 )
             };
 
-            // APPLY THE HARDWARE OVERRIDES DIRECTLY TO THE BYTE STREAM
-            // This splits the 16-bit word cleanly into individual byte slots,
-            // correcting the ST7796S controller's native color inversion and channel mismatch.
             for (i, chunk) in raw_render_bytes.chunks_exact(2).enumerate() {
-                let low_byte = chunk[0];
-                let high_byte = chunk[1];
-
-                // Use your working byte-level transformations directly
-                transfer_buffer[i * 2] = !high_byte;
-                transfer_buffer[i * 2 + 1] = !low_byte;
+                transfer_buffer[i * 2] = chunk[1]; // Swap byte orders cleanly
+                transfer_buffer[i * 2 + 1] = chunk[0]; // No bit inversions or hacks
             }
 
             display
@@ -298,7 +324,9 @@ pub async fn run(
 
             if !screen_on {
                 // Turn on screen
-                tft_bl.set_high();
+                tft_bl
+                    .set_duty(50)
+                    .map_err(|e| anyhow::anyhow!("{:?}", e))?;
                 screen_on = true;
             }
         }

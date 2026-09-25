@@ -30,7 +30,7 @@ esp_bootloader_esp_idf::esp_app_desc!();
 #[esp_rtos::main]
 async fn main(spawner: Spawner) -> ! {
     let mut controller = vox_esp32_core::init(
-        Device::new(DeviceType::None, 55),
+        Device::new(DeviceType::Control, 1),
         spawner,
         Some(esp_hal::time::Duration::from_millis(2000)),
     )
