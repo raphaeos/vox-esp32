@@ -43,17 +43,24 @@ async fn main(spawner: Spawner) -> ! {
 
     log::info!("Vox ESP32 Control: Started");
 
-    if let Err(e) = run(&mut controller).await {
-        log::error!("Error in main: {:?}", e);
-    }
+    if let Err(e) = init(&mut controller).await {
+        log::error!("Error in main init: {:?}", e);
 
-    log::warn!("Main loop terminated, rebooting in 5s ...");
-    Timer::after(Duration::from_millis(5000)).await;
-    software_reset();
+        Timer::after(Duration::from_millis(5000)).await;
+        software_reset();
+    } else {
+        loop {
+            // TODO:
+            controller.feed();
+
+            // Endless loop.
+            Timer::after(Duration::from_millis(1000)).await;
+        }
+    }
 }
 
-pub async fn run(controller: &mut Controller) -> anyhow::Result<()> {
+pub async fn init(controller: &mut Controller) -> anyhow::Result<()> {
     let (window, app) = ui::init()?;
 
-    display::run(controller, window, app).await
+    display::spawn(controller, window, app).await
 }

@@ -267,39 +267,69 @@ async fn init_touch(controller: &mut Controller) -> Result<(TouchAdapter, Input<
     Ok((Ft6336uAsync::new(i2c), touch_int))
 }
 
-pub async fn run(
-    controller: &mut Controller,
+#[embassy_executor::task]
+async fn display_task(mut mgr: DisplayManager) {
+    mgr.run().await;
+}
+
+pub struct DisplayManager {
+    display: DisplayAdapter,
+    tft_bl: Channel<'static, LowSpeed>,
     window: Rc<MinimalSoftwareWindow>,
-    app: AppWindow,
-) -> Result<()> {
-    log::info!("Started LCD ...");
+    render_buffer: Vec<Rgb565Pixel>,
+    transfer_buffer: Vec<u8>,
+    screen_on: bool,
+}
 
-    let (mut display, mut tft_bl) = init_display(controller).await?;
-    let (mut touch, mut touch_int) = init_touch(controller).await?;
+impl DisplayManager {
+    pub(crate) async fn spawn(
+        controller: &mut Controller,
+        window: Rc<MinimalSoftwareWindow>,
+    ) -> Result<()> {
+        let (mut display, mut tft_bl) = init_display(controller).await?;
 
-    let mut render_buffer = Vec::with_capacity(UI_WIDTH as usize * UI_HEIGHT as usize);
-    render_buffer.resize(UI_WIDTH as usize * UI_HEIGHT as usize, Rgb565Pixel(0));
+        let mut render_buffer = Vec::with_capacity(UI_WIDTH as usize * UI_HEIGHT as usize);
+        render_buffer.resize(UI_WIDTH as usize * UI_HEIGHT as usize, Rgb565Pixel(0));
 
-    let mut transfer_buffer = Vec::with_capacity(UI_WIDTH as usize * UI_HEIGHT as usize * 2); // 2 bytes per pixel
-    transfer_buffer.resize(UI_WIDTH as usize * UI_HEIGHT as usize * 2, 0u8);
+        let mut transfer_buffer = Vec::with_capacity(UI_WIDTH as usize * UI_HEIGHT as usize * 2); // 2 bytes per pixel
+        transfer_buffer.resize(UI_WIDTH as usize * UI_HEIGHT as usize * 2, 0u8);
 
-    let mut screen_on = false;
-    let mut touch_active = false;
-    let mut last_x = 0.0;
-    let mut last_y = 0.0;
+        let mgr = DisplayManager {
+            display,
+            tft_bl,
+            window,
+            render_buffer,
+            transfer_buffer,
+            screen_on: false,
+        };
 
-    loop {
-        // Feed the watchdog.
-        controller.feed();
+        controller.spawn(display_task(mgr)?);
 
+        Ok(())
+    }
+
+    async fn run(&mut self) {
+        log::info!("DisplayManager: Started");
+
+        loop {
+            if let Err(e) = self.draw().await {
+                log::error!("DisplayManager draw failed: {:?}", e);
+                Timer::after(Duration::from_millis(100)).await;
+            } else {
+                Timer::after(Duration::from_millis(16)).await;
+            }
+        }
+    }
+
+    async fn draw(&mut self) -> Result<()> {
         // Pump Slint's clock ticks so animations and property state systems update
         slint::platform::update_timers_and_animations();
 
         // 1. Immediate-mode check: only touch the frame memory if Slint actively redraws it
         let mut ui_did_render = false;
-        window.draw_if_needed(|renderer| {
+        self.window.draw_if_needed(|renderer| {
             renderer.render_by_line(Framebuffer {
-                pixels: render_buffer.as_mut_slice(),
+                pixels: self.render_buffer.as_mut_slice(),
             });
             ui_did_render = true;
         });
@@ -307,65 +337,144 @@ pub async fn run(
         if ui_did_render {
             let raw_render_bytes = unsafe {
                 core::slice::from_raw_parts(
-                    render_buffer.as_ptr() as *const u8,
-                    render_buffer.len() * size_of::<Rgb565Pixel>(),
+                    self.render_buffer.as_ptr() as *const u8,
+                    self.render_buffer.len() * size_of::<Rgb565Pixel>(),
                 )
             };
 
             for (i, chunk) in raw_render_bytes.chunks_exact(2).enumerate() {
-                transfer_buffer[i * 2] = chunk[1]; // Swap byte orders cleanly
-                transfer_buffer[i * 2 + 1] = chunk[0]; // No bit inversions or hacks
+                self.transfer_buffer[i * 2] = chunk[1]; // Swap byte orders cleanly
+                self.transfer_buffer[i * 2 + 1] = chunk[0]; // No bit inversions or hacks
             }
 
-            display
-                .show_raw_data(0, 0, UI_WIDTH, UI_HEIGHT, transfer_buffer.as_slice())
+            self.display
+                .show_raw_data(0, 0, UI_WIDTH, UI_HEIGHT, self.transfer_buffer.as_slice())
                 .await
                 .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
-            if !screen_on {
+            if !self.screen_on {
                 // Turn on screen
-                tft_bl
+                self.tft_bl
                     .set_duty(50)
                     .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-                screen_on = true;
+                self.screen_on = true;
             }
         }
 
-        // Touch interrupt.
-        if touch_int.is_low() {
-            if let Ok(data) = touch.scan().await {
-                let pressed = data.touch_count > 0;
+        Ok(())
+    }
+}
 
-                if pressed {
-                    let x = data.points[0].x as f32;
-                    let y = data.points[0].y as f32;
+#[embassy_executor::task]
+async fn touch_task(mut mgr: TouchManager) {
+    mgr.run().await;
+}
 
-                    if !touch_active {
-                        window.dispatch_event(WindowEvent::PointerPressed {
-                            position: LogicalPosition::new(x, y),
-                            button: PointerEventButton::Left,
-                        });
+pub struct TouchManager {
+    touch: TouchAdapter,
+    touch_int: Input<'static>,
+    window: Rc<MinimalSoftwareWindow>,
+    touch_active: bool,
+    last_x: f32,
+    last_y: f32,
+}
 
-                        touch_active = true;
-                    } else {
-                        window.dispatch_event(WindowEvent::PointerMoved {
-                            position: LogicalPosition::new(x, y),
-                        });
-                    }
+impl TouchManager {
+    pub(crate) async fn spawn(
+        controller: &mut Controller,
+        window: Rc<MinimalSoftwareWindow>,
+    ) -> Result<()> {
+        let (mut touch, mut touch_int) = init_touch(controller).await?;
 
-                    last_x = x;
-                    last_y = y;
-                } else if touch_active {
-                    window.dispatch_event(WindowEvent::PointerReleased {
-                        position: LogicalPosition::new(last_x, last_y),
+        let mgr = TouchManager {
+            touch,
+            touch_int,
+            window,
+            touch_active: false,
+            last_x: 0.0,
+            last_y: 0.0,
+        };
+
+        controller.spawn(touch_task(mgr)?);
+
+        Ok(())
+    }
+
+    async fn run(&mut self) {
+        log::info!("TouchManager: Started");
+
+        loop {
+            if let Err(e) = self.scan().await {
+                log::error!("TouchManager scan failed: {:?}", e);
+                Timer::after(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    async fn scan(&mut self) -> Result<()> {
+        self.touch_int.wait_for_low().await;
+
+        if let Ok(data) = self.touch.scan().await {
+            let pressed = data.touch_count > 0;
+
+            if pressed {
+                // Extract raw integers from your FT6336U scan payload
+                let raw_x = data.points[0].x as i32;
+                let raw_y = data.points[0].y as i32;
+
+                // Apply the landscape rotation translation matrix natively
+                // This maps your portrait coordinates directly to Slint's pixel grid
+                let calibrated_x = raw_y as f32;
+                let calibrated_y = (320 - raw_x) as f32;
+
+                if self.last_x == calibrated_x && self.last_y == calibrated_y {
+                    // Skip dupe frames
+                    return Ok(());
+                }
+
+                log::trace!(
+                    "TouchManager: Touch pressed={}, x={}, y={}",
+                    pressed,
+                    calibrated_x,
+                    calibrated_y
+                );
+
+                if !self.touch_active {
+                    self.window.dispatch_event(WindowEvent::PointerPressed {
+                        position: LogicalPosition::new(calibrated_x, calibrated_y),
                         button: PointerEventButton::Left,
                     });
 
-                    touch_active = false;
+                    self.touch_active = true;
+                } else {
+                    self.window.dispatch_event(WindowEvent::PointerMoved {
+                        position: LogicalPosition::new(calibrated_x, calibrated_y),
+                    });
                 }
+
+                self.last_x = calibrated_x;
+                self.last_y = calibrated_y;
+            } else if self.touch_active {
+                log::trace!("TouchManager: Touch pressed={}", pressed);
+
+                self.window.dispatch_event(WindowEvent::PointerReleased {
+                    position: LogicalPosition::new(self.last_x, self.last_y),
+                    button: PointerEventButton::Left,
+                });
+
+                self.touch_active = false;
             }
         }
 
-        Timer::after(Duration::from_millis(16)).await;
+        Ok(())
     }
+}
+
+pub async fn spawn(
+    controller: &mut Controller,
+    window: Rc<MinimalSoftwareWindow>,
+    app: AppWindow,
+) -> Result<()> {
+    DisplayManager::spawn(controller, window.clone()).await?;
+    TouchManager::spawn(controller, window).await
 }
