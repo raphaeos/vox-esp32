@@ -3,8 +3,8 @@ use esp_hal::peripherals::{
     GPIO16, GPIO17, GPIO18, GPIO19, GPIO2, GPIO20, GPIO21, GPIO26, GPIO27, GPIO28, GPIO29, GPIO3,
     GPIO30, GPIO31, GPIO32, GPIO33, GPIO34, GPIO35, GPIO36, GPIO37, GPIO38, GPIO39, GPIO4, GPIO40,
     GPIO41, GPIO42, GPIO43, GPIO44, GPIO45, GPIO46, GPIO47, GPIO48, GPIO5, GPIO6, GPIO7, GPIO8,
-    GPIO9, I2C0, I2C1, I2S0, I2S1, LEDC, PCNT, RMT, SPI0, SPI1, SPI2, TIMG0, TIMG1, TWAI0, UART0,
-    UART1, UART2,
+    GPIO9, I2C0, I2C1, I2S0, I2S1, LEDC, PCNT, PSRAM, RMT, SPI0, SPI1, SPI2, TIMG0, TIMG1, TWAI0,
+    UART0, UART1, UART2,
 };
 
 #[allow(non_snake_case)]
@@ -84,6 +84,7 @@ pub struct Peripherals {
     pub ADC2: Option<ADC2<'static>>,
 
     pub FROM_CPU_INTR0: Option<FROM_CPU_INTR0<'static>>,
+    pub PSRAM: Option<PSRAM<'static>>,
 }
 
 impl Peripherals {
@@ -164,6 +165,8 @@ impl Peripherals {
             ADC2: Some(p.ADC2),
 
             FROM_CPU_INTR0: Some(p.FROM_CPU_INTR0),
+
+            PSRAM: Some(p.PSRAM),
         }
     }
 }

@@ -33,7 +33,9 @@
    14	SD_CS	    SD card selection control signal, low level active (without SD card function, can be disconnected)
         NOT USED
 */
-
+use alloc::rc::Rc;
+use alloc::vec::Vec;
+use anyhow::Result;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::gpio::{Input, Pull};
@@ -44,18 +46,61 @@ use esp_hal::{
         master::{Config, Spi},
         Mode,
     },
+    Async,
 };
-use ft6336u_dd::Ft6336uAsync;
+use ft6336u_dd::{Ft6336u, Ft6336uAsync, Ft6336uInterface};
 use lcd_async::interface::SpiInterface;
 use lcd_async::models::ST7796;
-use lcd_async::Builder;
+use lcd_async::{Builder, Display};
 use num_traits::float::FloatCore;
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::Controller;
 
-pub async fn run(controller: &mut Controller) -> anyhow::Result<()> {
-    log::info!("Started LCD test ...");
+use crate::ui::AppWindow;
+use core::ops::Range;
+use lcd_async::options::{Orientation, Rotation};
+use slint::platform::{
+    software_renderer::{
+        LineBufferProvider, MinimalSoftwareWindow, RepaintBufferType, Rgb565Pixel,
+    },
+    PointerEventButton, WindowEvent,
+};
+use slint::LogicalPosition;
 
+pub type DisplayAdapter = Display<
+    SpiInterface<ExclusiveDevice<Spi<'static, Async>, Output<'static>, Delay>, Output<'static>>,
+    ST7796,
+    Output<'static>,
+>;
+pub type TouchAdapter =
+    Ft6336uAsync<Ft6336uInterface<I2c<'static, Async>>, esp_hal::i2c::master::Error>;
+
+pub const DISPLAY_WIDTH: u16 = 320;
+pub const DISPLAY_HEIGHT: u16 = 480;
+pub const UI_WIDTH: u16 = 480;
+pub const UI_HEIGHT: u16 = 320;
+
+struct Framebuffer<'a> {
+    pixels: &'a mut [Rgb565Pixel],
+}
+
+impl<'a> LineBufferProvider for Framebuffer<'a> {
+    type TargetPixel = Rgb565Pixel;
+
+    fn process_line(
+        &mut self,
+        line: usize,
+        range: Range<usize>,
+        render_fn: impl FnOnce(&mut [Rgb565Pixel]),
+    ) {
+        let start = line * (UI_WIDTH as usize) + range.start;
+        let end = line * (UI_WIDTH as usize) + range.end;
+
+        render_fn(&mut self.pixels[start..end]);
+    }
+}
+
+async fn init_display(controller: &mut Controller) -> Result<(DisplayAdapter, Output<'static>)> {
     let device_delay = Delay;
     let mut init_delay = Delay;
 
@@ -129,11 +174,20 @@ pub async fn run(controller: &mut Controller) -> anyhow::Result<()> {
 
     let mut display = Builder::new(ST7796, di)
         .reset_pin(tft_rst)
-        .display_size(320, 480)
+        .display_size(DISPLAY_WIDTH, DISPLAY_HEIGHT)
         .init(&mut init_delay)
         .await
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
+    display
+        .set_orientation(Orientation::new().flip_horizontal().rotate(Rotation::Deg90))
+        .await
+        .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+    Ok((display, tft_bl))
+}
+
+async fn init_touch(controller: &mut Controller) -> Result<(TouchAdapter, Input<'static>)> {
     // Setup touch
     let mut ctp_rst = Output::new(
         (&mut controller.peripherals.GPIO21)
@@ -166,92 +220,124 @@ pub async fn run(controller: &mut Controller) -> anyhow::Result<()> {
     ) // red
     .into_async(); // Converts driver to Embassy async non-blocking execution
 
-    let mut touch_int = Input::new(
+    let touch_int = Input::new(
         (&mut controller.peripherals.GPIO19)
             .take()
             .ok_or(CoreError::PeripheralTaken("GPIO19"))?,
         esp_hal::gpio::InputConfig::default().with_pull(Pull::Up),
     );
 
-    let mut touch = Ft6336uAsync::new(i2c);
-
-    // Draw
-    const WIDTH: u16 = 320;
-    const HEIGHT: u16 = 480;
-    let mut row_buffer = [0u8; 320 * 2];
-
-    // Loop through each horizontal row index
-    for row_idx in 0..HEIGHT {
-        // 1. Calculate a linear spectrum value skipping the Red segment.
-        // Maps row 0..480 to a fractional value between 0.0 and 1.0
-        let progress = row_idx as f32 / HEIGHT as f32;
-
-        // 2. Generate a standard HSV-to-RGB565 spectrum point
-        // We restrict the hue domain to stay between 60.0 (Yellow) and 300.0 (Violet)
-        let hue = 60.0 + (progress * 240.0);
-        let rgb = hsv_to_rgb565(hue, 1.0, 1.0);
-
-        let high_byte = (rgb >> 8) as u8;
-        let low_byte = (rgb & 0xFF) as u8;
-
-        // 3. Fill the entire row buffer with this specific color point
-        for chunk in row_buffer.chunks_exact_mut(2) {
-            chunk[0] = high_byte;
-            chunk[1] = low_byte;
-        }
-
-        // 4. Blast the single-color line down to the display matrix via DMA
-        display
-            .show_raw_data(0, row_idx, WIDTH, 1, &mut row_buffer)
-            .await
-            .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-    }
-
-    // Turn on screen
-    tft_bl.set_high();
-
-    loop {
-        log::info!("Waiting for touch events ...");
-
-        touch_int.wait_for_low().await;
-
-        // scan() reads both potential points in a single async operation
-        if let Ok(touch_data) = touch.scan().await {
-            log::info!(
-                "[count: {}] Touch 1 -> X: {}, Y: {}, Status: {:?}, Touch 2 -> X: {}, Y: {}, Status: {:?}",
-                touch_data.touch_count,
-                touch_data.points[0].x,
-                touch_data.points[0].y,
-                touch_data.points[0].status,
-                touch_data.points[1].x,
-                touch_data.points[1].y,
-                touch_data.points[1].status
-            );
-        }
-
-        Timer::after(Duration::from_millis(10)).await;
-    }
+    Ok((Ft6336uAsync::new(i2c), touch_int))
 }
 
-fn hsv_to_rgb565(h: f32, s: f32, v: f32) -> u16 {
-    let c = v * s;
-    let x = c * (1.0 - ((h / 60.0) % 2.0 - 1.0).abs());
-    let m = v - c;
+pub async fn run(
+    controller: &mut Controller,
+    window: Rc<MinimalSoftwareWindow>,
+    app: AppWindow,
+) -> Result<()> {
+    log::info!("Started LCD ...");
 
-    let (r, g, b) = if h < 120.0 {
-        (c, x, 0.0) // Yellow -> Green
-    } else if h < 180.0 {
-        (x, c, 0.0) // Green -> Cyan
-    } else if h < 240.0 {
-        (0.0, c, x) // Cyan -> Blue
-    } else {
-        (0.0, x, c) // Blue -> Violet
-    };
+    let (mut display, mut tft_bl) = init_display(controller).await?;
+    let (mut touch, mut touch_int) = init_touch(controller).await?;
 
-    // Compress values into 5-6-5 standard bit layout spaces
-    let r_pixel = (((r + m) * 31.0).round() as u16) << 11;
-    let g_pixel = (((g + m) * 63.0).round() as u16) << 5;
-    let b_pixel = ((b + m) * 31.0).round() as u16;
+    let mut render_buffer = Vec::with_capacity(UI_WIDTH as usize * UI_HEIGHT as usize);
+    render_buffer.resize(UI_WIDTH as usize * UI_HEIGHT as usize, Rgb565Pixel(0));
 
-    r_pixel | g_pixel | b_pixel
+    let mut transfer_buffer = Vec::with_capacity(UI_WIDTH as usize * UI_HEIGHT as usize * 2); // 2 bytes per pixel
+    transfer_buffer.resize(UI_WIDTH as usize * UI_HEIGHT as usize * 2, 0u8);
+
+    let mut screen_on = false;
+    let mut touch_active = false;
+    let mut last_x = 0.0;
+    let mut last_y = 0.0;
+
+    loop {
+        // Feed the watchdog.
+        controller.feed();
+
+        // Pump Slint's clock ticks so animations and property state systems update
+        slint::platform::update_timers_and_animations();
+
+        // 1. Immediate-mode check: only touch the frame memory if Slint actively redraws it
+        let mut ui_did_render = false;
+        window.draw_if_needed(|renderer| {
+            renderer.render_by_line(Framebuffer {
+                pixels: render_buffer.as_mut_slice(),
+            });
+            ui_did_render = true;
+        });
+
+        if ui_did_render {
+            // Upload the framebuffer asynchronously.
+            //
+            // Rgb565Pixel is a 16-bit RGB565 pixel. This converts the framebuffer
+            // to the byte slice expected by lcd_async.
+            let raw_render_bytes = unsafe {
+                core::slice::from_raw_parts(
+                    render_buffer.as_ptr() as *const u8,
+                    render_buffer.len() * size_of::<Rgb565Pixel>(),
+                )
+            };
+
+            // APPLY THE HARDWARE OVERRIDES DIRECTLY TO THE BYTE STREAM
+            // This splits the 16-bit word cleanly into individual byte slots,
+            // correcting the ST7796S controller's native color inversion and channel mismatch.
+            for (i, chunk) in raw_render_bytes.chunks_exact(2).enumerate() {
+                let low_byte = chunk[0];
+                let high_byte = chunk[1];
+
+                // Use your working byte-level transformations directly
+                transfer_buffer[i * 2] = !high_byte;
+                transfer_buffer[i * 2 + 1] = !low_byte;
+            }
+
+            display
+                .show_raw_data(0, 0, UI_WIDTH, UI_HEIGHT, transfer_buffer.as_slice())
+                .await
+                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+
+            if !screen_on {
+                // Turn on screen
+                tft_bl.set_high();
+                screen_on = true;
+            }
+        }
+
+        // Touch interrupt.
+        if touch_int.is_low() {
+            if let Ok(data) = touch.scan().await {
+                let pressed = data.touch_count > 0;
+
+                if pressed {
+                    let x = data.points[0].x as f32;
+                    let y = data.points[0].y as f32;
+
+                    if !touch_active {
+                        window.dispatch_event(WindowEvent::PointerPressed {
+                            position: LogicalPosition::new(x, y),
+                            button: PointerEventButton::Left,
+                        });
+
+                        touch_active = true;
+                    } else {
+                        window.dispatch_event(WindowEvent::PointerMoved {
+                            position: LogicalPosition::new(x, y),
+                        });
+                    }
+
+                    last_x = x;
+                    last_y = y;
+                } else if touch_active {
+                    window.dispatch_event(WindowEvent::PointerReleased {
+                        position: LogicalPosition::new(last_x, last_y),
+                        button: PointerEventButton::Left,
+                    });
+
+                    touch_active = false;
+                }
+            }
+        }
+
+        Timer::after(Duration::from_millis(16)).await;
+    }
 }

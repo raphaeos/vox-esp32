@@ -72,6 +72,14 @@ impl Controller {
         let config = esp_hal::Config::default().with_cpu_clock(CpuClock::max());
         let mut peripherals = Peripherals::new(esp_hal::init(config));
 
+        esp_alloc::psram_allocator!(
+            peripherals
+                .PSRAM
+                .take()
+                .ok_or(CoreError::PeripheralTaken("PSRAM"))?,
+            esp_hal::psram
+        );
+
         esp_alloc::heap_allocator!(
             #[esp_hal::ram(reclaimed)]
             size: 72 * 1024

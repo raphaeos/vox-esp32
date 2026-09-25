@@ -53,9 +53,7 @@ async fn main(spawner: Spawner) -> ! {
 }
 
 pub async fn run(controller: &mut Controller) -> anyhow::Result<()> {
-    //test_leds::run(&mut controller).await;
-    //test_adc_voltage::run(&mut controller).await;
-    //test_ads1115::run(controller).await
-    //test_can::run(controller).await
-    display::run(controller).await
+    let (window, app) = ui::init()?;
+
+    display::run(controller, window, app).await
 }

@@ -1,8 +1,15 @@
 import { AboutSlint, VerticalBox } from "std-widgets.slint";
 
+import "assets/NotoSans-Regular.ttf";
+
 export component AppWindow inherits Window {
+    width: 480px;
+    height: 320px;
+    default-font-family: "Noto Sans";
+
     VerticalBox {
         Text {
+            font-size: 20px;
             text: "Hello World!";
         }
 

@@ -1,3 +1,4 @@
+use crate::display::{UI_HEIGHT, UI_WIDTH};
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use anyhow::{anyhow, Result};
@@ -5,8 +6,8 @@ use slint::platform::software_renderer::MinimalSoftwareWindow;
 
 slint::include_modules!();
 
-struct EspPlatform {
-    window: Rc<MinimalSoftwareWindow>,
+pub struct EspPlatform {
+    pub window: Rc<MinimalSoftwareWindow>,
 }
 
 impl slint::platform::Platform for EspPlatform {
@@ -22,12 +23,12 @@ impl slint::platform::Platform for EspPlatform {
     }
 }
 
-pub fn init() -> Result<()> {
+pub fn init() -> Result<(Rc<MinimalSoftwareWindow>, AppWindow)> {
     // A. Allocate the window instance and set the platform definition
     let window = MinimalSoftwareWindow::new(
         slint::platform::software_renderer::RepaintBufferType::NewBuffer,
     );
-    window.set_size(slint::PhysicalSize::new(320, 480));
+    window.set_size(slint::PhysicalSize::new(UI_WIDTH as u32, UI_HEIGHT as u32));
 
     let platform = EspPlatform {
         window: window.clone(),
@@ -38,5 +39,5 @@ pub fn init() -> Result<()> {
     let ui = AppWindow::new().map_err(|e| anyhow!(e))?;
     ui.show().map_err(|e| anyhow!(e))?;
 
-    Ok(())
+    Ok((window.clone(), ui))
 }
