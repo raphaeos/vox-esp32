@@ -1,25 +1,38 @@
 import { AboutSlint, VerticalBox } from "std-widgets.slint";
 
+import { State, Page } from "common.slint";
+import { Sidebar } from "components/sidebar.slint";
+import {
+    HomePage,
+} from "./pages/pages.slint";
+
 import "assets/NotoSans-Regular.ttf";
+import "assets/NotoSans-Medium.ttf";
 
 export component AppWindow inherits Window {
+    title: @tr("Vox Control");
+
     width: 480px;
     height: 320px;
     full-screen: true;
     default-font-family: "Noto Sans";
+    default-font-size: 30px;
     background: #000000;
 
     Image {
-        source: @image-url("assets/background1-480x320.jpeg");
+        source: @image-url("assets/background3-480x320.png");
         width: parent.width;
         height: parent.height;
         image-fit: cover;
     }
 
-    Text {
-        x: 30px;
-        y: 30px;
-        font-size: 30px;
-        text: "Hello World!";
+    Rectangle {
+        HorizontalLayout {
+            side-bar := Sidebar { }
+
+            main-view := Rectangle {
+                if State.active-page == Page.home: home-page := HomePage { }
+            }
+        }
     }
 }

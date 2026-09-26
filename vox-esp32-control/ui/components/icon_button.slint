@@ -1,0 +1,23 @@
+import { BaseStyle } from "../common.slint";
+import { Button } from "./button.slint";
+
+export component IconButton inherits Button {
+    in property <image> icon <=> img.source;
+    in property <brush> colorize <=> img.colorize;
+    in property <length> icon-size <=> img.width;
+
+    width: 40px;
+    height: 40px;
+    border-radius: 14px;
+
+    background: root.hovered ? BaseStyle.text-secondary.transparentize(0.8) : transparent;
+    border-width: 2px;
+    border-color: transparent;
+
+    img := Image {
+        width: 10px;
+        image-fit: contain;
+
+        colorize: root.hovered ? BaseStyle.text-primary : BaseStyle.text-secondary;
+    }
+}

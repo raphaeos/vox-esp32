@@ -5,16 +5,16 @@
    2	GND	        Power ground
         (GND brown)
    3	LCD_CS	    LCD selection control signal, Low level active
-        GPIO 1 (orange)
+        GPIO 10 (orange)
    4	LCD_RST	    LCD reset control signal, Low level reset
         GPIO 2 (yellow)
    5	LCD_RS	    LCD command / data selection control signal
                     High level: data, low level: command
         GPIO 42 (green)
    6	SDI(MOSI)	SPI bus write data signal(SD card and LCD screen used together)
-        GPIO 41 (blue)
+        GPIO 11 (blue)
    7	SCK	        SPI bus clock signal(SD card and LCD screen used together)
-        GPIO 40 (purple)
+        GPIO 12 (purple)
    8	LED	        LCD backlight control signal (If you need control, please connect the pins. If you don't need control, you can skip it)
         GPIO 39 (grey)
    9	SDO(MISO)	SPI bus read data signal (SD card and LCD screen used together)
@@ -41,6 +41,7 @@ use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::gpio::Pin;
 use esp_hal::gpio::{Input, Pull};
 use esp_hal::i2c::master::{Config as I2cConfig, I2c};
+use esp_hal::time::Instant;
 use esp_hal::{
     gpio::{Level, Output, OutputConfig},
     ledc::{
@@ -53,19 +54,21 @@ use esp_hal::{
         Mode,
     },
     time::Rate,
-    Async,
+    Async, Blocking,
 };
 use ft6336u_dd::{Ft6336uAsync, Ft6336uInterface};
-use lcd_async::interface::SpiInterface;
-use lcd_async::models::ST7796;
-use lcd_async::{Builder, Display};
+use mipidsi::{
+    interface::SpiInterface,
+    models::ST7796,
+    options::{ColorOrder, Orientation, Rotation},
+    Builder,
+};
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::Controller;
 
 use crate::ui::AppWindow;
 use core::ops::Range;
 use esp_hal::ledc::channel::Channel;
-use lcd_async::options::{ColorOrder, Orientation, Rotation};
 use slint::platform::{
     software_renderer::{LineBufferProvider, MinimalSoftwareWindow, Rgb565Pixel},
     PointerEventButton, WindowEvent,
@@ -73,8 +76,12 @@ use slint::platform::{
 use slint::LogicalPosition;
 use static_cell::StaticCell;
 
-pub type DisplayAdapter = Display<
-    SpiInterface<ExclusiveDevice<Spi<'static, Async>, Output<'static>, Delay>, Output<'static>>,
+pub type DisplayAdapter = mipidsi::Display<
+    SpiInterface<
+        'static,
+        ExclusiveDevice<Spi<'static, Blocking>, Output<'static>, Delay>,
+        Output<'static>,
+    >,
     ST7796,
     Output<'static>,
 >;
@@ -88,23 +95,58 @@ pub const DISPLAY_HEIGHT: u16 = 480;
 pub const UI_WIDTH: u16 = 480;
 pub const UI_HEIGHT: u16 = 320;
 
-struct Framebuffer<'a> {
-    pixels: &'a mut [Rgb565Pixel],
+struct SyncLineBuffer<'a> {
+    display: &'a mut DisplayAdapter,
+    chunk_buffer: &'a mut [u16], // Use u16 directly to match Slint's internal pixel size
 }
 
-impl<'a> LineBufferProvider for Framebuffer<'a> {
+impl<'a> LineBufferProvider for SyncLineBuffer<'a> {
     type TargetPixel = Rgb565Pixel;
 
     fn process_line(
         &mut self,
-        line: usize,
+        line_index: usize,
         range: Range<usize>,
-        render_fn: impl FnOnce(&mut [Rgb565Pixel]),
+        render_fn: impl FnOnce(&mut [Self::TargetPixel]),
     ) {
-        let start = line * (UI_WIDTH as usize) + range.start;
-        let end = line * (UI_WIDTH as usize) + range.end;
+        let pixel_count = range.end - range.start;
 
-        render_fn(&mut self.pixels[start..end]);
+        // Calculate where this specific line belongs inside our 16-line chunk buffer
+        let chunk_line_offset = line_index % 16;
+        let start_idx = chunk_line_offset * pixel_count;
+        let end_idx = start_idx + pixel_count;
+
+        let pool = unsafe {
+            core::slice::from_raw_parts_mut(
+                self.chunk_buffer[start_idx..end_idx].as_mut_ptr() as *mut Self::TargetPixel,
+                pixel_count,
+            )
+        };
+
+        // Render directly into the correct row of our internal SRAM chunk
+        render_fn(pool);
+
+        // If we have filled up 16 lines, OR we have reached the very last line of the screen, blast the batch
+        if chunk_line_offset == 15 || line_index == (UI_HEIGHT as usize - 1) {
+            let total_lines_in_batch = chunk_line_offset + 1;
+            let total_pixels = pixel_count * total_lines_in_batch;
+            let start_line = line_index - chunk_line_offset;
+
+            let colors_iter = self.chunk_buffer[0..total_pixels]
+                .iter()
+                .map(|&raw| embedded_graphics::pixelcolor::raw::RawU16::new(raw).into());
+
+            // Set the window constraints once for the entire block of rows
+            self.display
+                .set_pixels(
+                    range.start as u16,
+                    start_line as u16,
+                    (range.end - 1) as u16,
+                    line_index as u16,
+                    colors_iter,
+                )
+                .ok();
+        }
     }
 }
 
@@ -118,9 +160,9 @@ async fn init_display(
     let tft_cs = Output::new(
         controller
             .peripherals
-            .GPIO1
+            .GPIO10
             .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO1"))?,
+            .ok_or(CoreError::PeripheralTaken("GPIO10"))?,
         Level::High,
         OutputConfig::default(),
     );
@@ -179,7 +221,7 @@ async fn init_display(
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
     let spi_config = Config::default()
-        .with_frequency(Rate::from_mhz(40))
+        .with_frequency(Rate::from_mhz(80))
         .with_mode(Mode::_0);
 
     let spi = Spi::new(
@@ -189,36 +231,37 @@ async fn init_display(
         spi_config,
     )? // Standard esp-hal result unpacker
     .with_sck(
-        (&mut controller.peripherals.GPIO40)
+        (&mut controller.peripherals.GPIO12)
             .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO40"))?,
+            .ok_or(CoreError::PeripheralTaken("GPIO12"))?,
     )
     .with_mosi(
-        (&mut controller.peripherals.GPIO41)
+        (&mut controller.peripherals.GPIO11)
             .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO41"))?,
+            .ok_or(CoreError::PeripheralTaken("GPIO11"))?,
     )
     .with_miso(
         (&mut controller.peripherals.GPIO38)
             .take()
             .ok_or(CoreError::PeripheralTaken("GPIO38"))?,
-    )
-    .into_async();
+    );
 
     let spi_device = ExclusiveDevice::new(spi, tft_cs, device_delay)?;
-    let di = SpiInterface::new(spi_device, tft_dc);
+
+    static DI_BUFFER: StaticCell<[u8; 512]> = StaticCell::new();
+    let buffer_ref = DI_BUFFER.init([0u8; 512]);
+
+    let di = SpiInterface::new(spi_device, tft_dc, buffer_ref);
 
     let mut display = Builder::new(ST7796, di)
         .reset_pin(tft_rst)
         .color_order(ColorOrder::Bgr)
         .display_size(DISPLAY_WIDTH, DISPLAY_HEIGHT)
         .init(&mut init_delay)
-        .await
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
     display
         .set_orientation(Orientation::new().flip_horizontal().rotate(Rotation::Deg90))
-        .await
         .map_err(|e| anyhow::anyhow!("{:?}", e))?;
 
     Ok((display, tft_bl))
@@ -276,9 +319,8 @@ pub struct DisplayManager {
     display: DisplayAdapter,
     tft_bl: Channel<'static, LowSpeed>,
     window: Rc<MinimalSoftwareWindow>,
-    render_buffer: Vec<Rgb565Pixel>,
-    transfer_buffer: Vec<u8>,
     screen_on: bool,
+    chunk_buffer: [u16; UI_WIDTH as usize * 16],
 }
 
 impl DisplayManager {
@@ -288,19 +330,12 @@ impl DisplayManager {
     ) -> Result<()> {
         let (mut display, mut tft_bl) = init_display(controller).await?;
 
-        let mut render_buffer = Vec::with_capacity(UI_WIDTH as usize * UI_HEIGHT as usize);
-        render_buffer.resize(UI_WIDTH as usize * UI_HEIGHT as usize, Rgb565Pixel(0));
-
-        let mut transfer_buffer = Vec::with_capacity(UI_WIDTH as usize * UI_HEIGHT as usize * 2); // 2 bytes per pixel
-        transfer_buffer.resize(UI_WIDTH as usize * UI_HEIGHT as usize * 2, 0u8);
-
         let mgr = DisplayManager {
             display,
             tft_bl,
             window,
-            render_buffer,
-            transfer_buffer,
             screen_on: false,
+            chunk_buffer: [0u16; UI_WIDTH as usize * 16],
         };
 
         controller.spawn(display_task(mgr)?);
@@ -315,8 +350,6 @@ impl DisplayManager {
             if let Err(e) = self.draw().await {
                 log::error!("DisplayManager draw failed: {:?}", e);
                 Timer::after(Duration::from_millis(100)).await;
-            } else {
-                Timer::after(Duration::from_millis(16)).await;
             }
         }
     }
@@ -325,33 +358,25 @@ impl DisplayManager {
         // Pump Slint's clock ticks so animations and property state systems update
         slint::platform::update_timers_and_animations();
 
-        // 1. Immediate-mode check: only touch the frame memory if Slint actively redraws it
         let mut ui_did_render = false;
+
         self.window.draw_if_needed(|renderer| {
-            renderer.render_by_line(Framebuffer {
-                pixels: self.render_buffer.as_mut_slice(),
-            });
             ui_did_render = true;
+            let start = Instant::now();
+
+            // Pipe Slint's line updates straight over the display hardware
+            renderer.render_by_line(SyncLineBuffer {
+                display: &mut self.display,
+                chunk_buffer: &mut self.chunk_buffer,
+            });
+
+            log::info!(
+                "DisplayManager: Rendered + Flushed: {}ms",
+                start.elapsed().as_millis()
+            );
         });
 
         if ui_did_render {
-            let raw_render_bytes = unsafe {
-                core::slice::from_raw_parts(
-                    self.render_buffer.as_ptr() as *const u8,
-                    self.render_buffer.len() * size_of::<Rgb565Pixel>(),
-                )
-            };
-
-            for (i, chunk) in raw_render_bytes.chunks_exact(2).enumerate() {
-                self.transfer_buffer[i * 2] = chunk[1]; // Swap byte orders cleanly
-                self.transfer_buffer[i * 2 + 1] = chunk[0]; // No bit inversions or hacks
-            }
-
-            self.display
-                .show_raw_data(0, 0, UI_WIDTH, UI_HEIGHT, self.transfer_buffer.as_slice())
-                .await
-                .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-
             if !self.screen_on {
                 // Turn on screen
                 self.tft_bl
@@ -359,6 +384,8 @@ impl DisplayManager {
                     .map_err(|e| anyhow::anyhow!("{:?}", e))?;
                 self.screen_on = true;
             }
+        } else {
+            Timer::after(Duration::from_millis(16)).await;
         }
 
         Ok(())
@@ -417,6 +444,8 @@ impl TouchManager {
         if let Ok(data) = self.touch.scan().await {
             let pressed = data.touch_count > 0;
 
+            log::warn!("TOUCH: {:?}", data.points[0]);
+
             if pressed {
                 // Extract raw integers from your FT6336U scan payload
                 let raw_x = data.points[0].x as i32;
@@ -427,12 +456,12 @@ impl TouchManager {
                 let calibrated_x = raw_y as f32;
                 let calibrated_y = (320 - raw_x) as f32;
 
-                if self.last_x == calibrated_x && self.last_y == calibrated_y {
-                    // Skip dupe frames
-                    return Ok(());
-                }
+                //if self.last_x == calibrated_x && self.last_y == calibrated_y {
+                // Skip dupe frames
+                //    return Ok(());
+                //}
 
-                log::trace!(
+                log::debug!(
                     "TouchManager: Touch pressed={}, x={}, y={}",
                     pressed,
                     calibrated_x,
@@ -455,7 +484,7 @@ impl TouchManager {
                 self.last_x = calibrated_x;
                 self.last_y = calibrated_y;
             } else if self.touch_active {
-                log::trace!("TouchManager: Touch pressed={}", pressed);
+                log::debug!("TouchManager: Touch pressed={}", pressed);
 
                 self.window.dispatch_event(WindowEvent::PointerReleased {
                     position: LogicalPosition::new(self.last_x, self.last_y),
@@ -465,6 +494,9 @@ impl TouchManager {
                 self.touch_active = false;
             }
         }
+
+        // Avoid thrashing when touching the screen
+        Timer::after(Duration::from_millis(16)).await;
 
         Ok(())
     }

@@ -1,0 +1,19 @@
+import { Page, Header } from "./page.slint";
+import { BaseStyle } from "../common.slint";
+
+export component HomePage inherits Page {
+    in-out property <length> header-row-height: 40px;
+    in-out property <length> button-spacing: 35px;
+
+    header-type: Header.none;
+
+    Text {
+        x: BaseStyle.default-margin;
+        y: BaseStyle.default-margin;
+        text: @tr("Home Page");
+        color: BaseStyle.text-primary;
+        font-size: BaseStyle.title-font-size;
+        font-family: BaseStyle.medium-weight;
+        letter-spacing: 0.7px;
+    }
+}

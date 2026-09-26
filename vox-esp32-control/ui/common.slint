@@ -1,0 +1,113 @@
+export enum Page { home, lights, power, hotwater, devices, settings }
+
+export enum Theme { Gradient, Minimalist, Vibrant, Glass }
+
+struct SideBarTheme {
+    icon-border-radius: length,
+    background: color,
+    separator: color,
+    active-background: brush,
+    active-icon-color: color,
+    inactive-icon-color: color,
+    icon-image-size: length,
+    icon-size: length,
+}
+
+export global ComponentTheme {
+    out property <SideBarTheme> side-bar: default;
+
+    property <SideBarTheme> default: {
+        icon-image-size: 24px,
+        icon-size: 40px,
+        icon-border-radius: 16px,
+        background: #f4f4ff,
+        //active-background: @linear-gradient(135deg, #655eff 0%, #aa48ff 100%),
+        active-background: #655eff,
+        active-icon-color: Colors.white,
+        inactive-icon-color: #6036f8,
+        separator: Colors.white,
+    };
+}
+
+struct ModeColors {
+    background: brush,
+    primary: color,
+    secondary: color,
+    text-primary: color,
+    text-secondary: color,
+    text-tertiary: color,
+    primary-button: brush,
+    destructive-button: brush,
+    primary-button-text-color: color,
+    destructive-button-text-color: color,
+    color-button-gradient: brush,
+    grayscale-button-gradient: brush,
+    spinbox-button-gradient: brush,
+    spinbox-button-border: color,
+    spinbox-text-color: color,
+    header-background: brush,
+    header-separator: color,
+    home-button-border: color,
+    home-button-text-color: color,
+}
+
+export global BaseStyle {
+    property <ModeColors> current-theme: default;
+
+    property <ModeColors> default: {
+        background: #f5f4ff,
+        primary: #6036f8,
+        secondary: #e9d4ff,
+        text-primary: #6036f8,
+        text-secondary: #aa48ff,
+        text-tertiary: #bd37fa,
+        primary-button: #a34bff,
+        destructive-button: #a24642,
+        primary-button-text-color: #FFFFFF,
+        destructive-button-text-color: #FFFFFF,
+        color-button-gradient: @linear-gradient(90deg, #ff6567 0%, #fec500 50%, #c787f3 100%),
+        grayscale-button-gradient: @linear-gradient(90deg, #99a1af 0%, #4a5565 100%),
+        spinbox-button-gradient: #8753ff,
+        spinbox-button-border: #00000000,
+        spinbox-text-color: #FFFFFF,
+        header-background: #f5f4ff,
+        header-separator: #dab2ff,
+        home-button-border: #00000000,
+        home-button-text-color: #FFFFFF,
+    };
+
+    out property <color> background: current-theme.background;
+    out property <color> primary: current-theme.primary;
+    out property <color> secondary: current-theme.secondary;
+    out property <color> text-primary: current-theme.text-primary;
+    out property <color> text-secondary: current-theme.text-secondary;
+    out property <color> text-tertiary: current-theme.text-tertiary;
+    out property <brush> primary-button: current-theme.primary-button;
+    out property <brush> destructive-button: current-theme.destructive-button;
+    out property <color> primary-button-text-color: current-theme.primary-button-text-color;
+    out property <color> destructive-button-text-color: current-theme.destructive-button-text-color;
+    out property <brush> color-button-gradient: current-theme.color-button-gradient;
+    out property <brush> grayscale-button-gradient: current-theme.grayscale-button-gradient;
+    out property <brush> spinbox-button-gradient: current-theme.spinbox-button-gradient;
+    out property <color> spinbox-button-border: current-theme.spinbox-button-border;
+    out property <color> spinbox-text-color: current-theme.spinbox-text-color;
+    out property <brush> header-background: current-theme.header-background;
+    out property <color> header-separator: current-theme.header-separator;
+    out property <color> home-button-border: current-theme.home-button-border;
+    out property <color> home-button-text-color: current-theme.home-button-text-color;
+
+    out property <length> base-font-size: 16px;
+    out property <length> title-font-size: 24px;
+    out property <length> button-width: 162px;
+    out property <length> button-height: 192px;
+    out property <length> side-bar-width: 60px;
+    out property <length> side-bar-margin: 10px;
+    out property <length> default-margin: 11px;
+
+    out property <string> regular-weight: "Noto Sans";
+    out property <string> medium-weight: "Noto Sans Medium";
+}
+
+export global State {
+    in property <Page> active-page: Page.home;
+}

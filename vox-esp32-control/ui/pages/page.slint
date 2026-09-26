@@ -1,0 +1,33 @@
+import { BackHeader, PlainHeader } from "../components/headers.slint";
+import { BaseStyle } from "../common.slint";
+
+export enum Header { none, back, plain }
+export component Page inherits Rectangle {
+    in property <string> header;
+    in property <string> subtitle;
+    in property <Header> header-type: Header.back;
+
+    callback back;
+
+    background: BaseStyle.background;
+    // Stop accidentally getting clicks dur to animation only moving page half way offscreen
+    visible: self.opacity > 0;
+
+    TouchArea { } // protect underneath controls
+
+    VerticalLayout {
+        if header-type == Header.back: BackHeader {
+            title: root.header;
+            subtitle: root.subtitle;
+            back => { root.back(); }
+        }
+
+        if header-type == Header.plain: PlainHeader {
+            title: root.header;
+        }
+
+        rec := Rectangle {
+            @children
+        }
+    }
+}
