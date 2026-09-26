@@ -34,7 +34,6 @@
         NOT USED
 */
 use alloc::rc::Rc;
-use alloc::vec::Vec;
 use anyhow::Result;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
@@ -63,10 +62,7 @@ use mipidsi::{
     options::{ColorOrder, Orientation, Rotation},
     Builder,
 };
-use vox_esp32_core::common::CoreError;
-use vox_esp32_core::Controller;
 
-use crate::ui::AppWindow;
 use core::ops::Range;
 use esp_hal::ledc::channel::Channel;
 use slint::platform::{
@@ -75,6 +71,11 @@ use slint::platform::{
 };
 use slint::LogicalPosition;
 use static_cell::StaticCell;
+
+use vox_esp32_core::common::CoreError;
+use vox_esp32_core::Controller;
+
+use crate::ui::AppWindow;
 
 pub type DisplayAdapter = mipidsi::Display<
     SpiInterface<
@@ -116,12 +117,8 @@ impl<'a> LineBufferProvider for SyncLineBuffer<'a> {
         let start_idx = chunk_line_offset * pixel_count;
         let end_idx = start_idx + pixel_count;
 
-        let pool = unsafe {
-            core::slice::from_raw_parts_mut(
-                self.chunk_buffer[start_idx..end_idx].as_mut_ptr() as *mut Self::TargetPixel,
-                pixel_count,
-            )
-        };
+        let ptr = self.chunk_buffer.as_mut_ptr() as *mut Rgb565Pixel;
+        let pool = unsafe { core::slice::from_raw_parts_mut(ptr.add(start_idx), pixel_count) };
 
         // Render directly into the correct row of our internal SRAM chunk
         render_fn(pool);
@@ -439,12 +436,12 @@ impl TouchManager {
     }
 
     async fn scan(&mut self) -> Result<()> {
-        self.touch_int.wait_for_low().await;
+        if !self.touch_active {
+            self.touch_int.wait_for_low().await;
+        }
 
         if let Ok(data) = self.touch.scan().await {
             let pressed = data.touch_count > 0;
-
-            log::warn!("TOUCH: {:?}", data.points[0]);
 
             if pressed {
                 // Extract raw integers from your FT6336U scan payload
@@ -456,12 +453,7 @@ impl TouchManager {
                 let calibrated_x = raw_y as f32;
                 let calibrated_y = (320 - raw_x) as f32;
 
-                //if self.last_x == calibrated_x && self.last_y == calibrated_y {
-                // Skip dupe frames
-                //    return Ok(());
-                //}
-
-                log::debug!(
+                log::trace!(
                     "TouchManager: Touch pressed={}, x={}, y={}",
                     pressed,
                     calibrated_x,
@@ -484,7 +476,7 @@ impl TouchManager {
                 self.last_x = calibrated_x;
                 self.last_y = calibrated_y;
             } else if self.touch_active {
-                log::debug!("TouchManager: Touch pressed={}", pressed);
+                log::trace!("TouchManager: Touch pressed={}", pressed);
 
                 self.window.dispatch_event(WindowEvent::PointerReleased {
                     position: LogicalPosition::new(self.last_x, self.last_y),
