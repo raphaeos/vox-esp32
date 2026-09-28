@@ -64,7 +64,12 @@ use mipidsi::{
 };
 
 use core::ops::Range;
+use embassy_executor::Spawner;
 use esp_hal::ledc::channel::Channel;
+use esp_hal::peripherals::{
+    GPIO10, GPIO11, GPIO12, GPIO19, GPIO2, GPIO20, GPIO21, GPIO38, GPIO39, GPIO42, GPIO47, I2C0,
+    LEDC, SPI2,
+};
 use slint::platform::{
     software_renderer::{LineBufferProvider, MinimalSoftwareWindow, Rgb565Pixel},
     PointerEventButton, WindowEvent,
@@ -74,8 +79,6 @@ use static_cell::StaticCell;
 
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::Controller;
-
-use crate::ui::AppWindow;
 
 pub type DisplayAdapter = mipidsi::Display<
     SpiInterface<
@@ -96,6 +99,126 @@ pub const DISPLAY_HEIGHT: u16 = 480;
 pub const UI_WIDTH: u16 = 480;
 pub const UI_HEIGHT: u16 = 320;
 
+pub struct DisplayLCDPeripherals {
+    tft_cs: GPIO10<'static>,
+    tft_rst: GPIO2<'static>,
+    tft_dc: GPIO42<'static>,
+    bl_pin: GPIO39<'static>,
+    ledc: LEDC<'static>,
+    spi: SPI2<'static>,
+    spi_sck: GPIO12<'static>,
+    spi_mosi: GPIO11<'static>,
+    spi_miso: GPIO38<'static>,
+}
+
+impl DisplayLCDPeripherals {
+    pub fn new(controller: &mut Controller) -> Result<Self> {
+        let tft_cs = controller
+            .peripherals
+            .GPIO10
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO10"))?;
+        let tft_rst = controller
+            .peripherals
+            .GPIO2
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO2"))?;
+        let tft_dc = controller
+            .peripherals
+            .GPIO42
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO42"))?;
+        let bl_pin = controller
+            .peripherals
+            .GPIO39
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO39"))?;
+        let ledc = controller
+            .peripherals
+            .LEDC
+            .take()
+            .ok_or(CoreError::PeripheralTaken("LEDC"))?;
+        let spi = controller
+            .peripherals
+            .SPI2
+            .take()
+            .ok_or(CoreError::PeripheralTaken("SPI2"))?;
+        let spi_sck = controller
+            .peripherals
+            .GPIO12
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO12"))?;
+        let spi_mosi = controller
+            .peripherals
+            .GPIO11
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO11"))?;
+        let spi_miso = controller
+            .peripherals
+            .GPIO38
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO38"))?;
+
+        Ok(Self {
+            tft_cs,
+            tft_rst,
+            tft_dc,
+            bl_pin,
+            ledc,
+            spi,
+            spi_sck,
+            spi_mosi,
+            spi_miso,
+        })
+    }
+}
+
+pub struct DisplayTouchPeripherals {
+    ctp_rst: GPIO21<'static>,
+    i2c: I2C0<'static>,
+    i2c_scl: GPIO47<'static>,
+    i2c_sda: GPIO20<'static>,
+    touch_int: GPIO19<'static>,
+}
+
+impl DisplayTouchPeripherals {
+    pub fn new(controller: &mut Controller) -> Result<Self> {
+        let ctp_rst = controller
+            .peripherals
+            .GPIO21
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO21"))?;
+        let i2c = controller
+            .peripherals
+            .I2C0
+            .take()
+            .ok_or(CoreError::PeripheralTaken("I2C0"))?;
+        let i2c_scl = controller
+            .peripherals
+            .GPIO47
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO47"))?;
+        let i2c_sda = controller
+            .peripherals
+            .GPIO20
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO20"))?;
+        let touch_int = controller
+            .peripherals
+            .GPIO19
+            .take()
+            .ok_or(CoreError::PeripheralTaken("GPIO19"))?;
+
+        Ok(Self {
+            ctp_rst,
+            i2c,
+            i2c_scl,
+            i2c_sda,
+            touch_int,
+        })
+    }
+}
+
 struct SyncLineBuffer<'a> {
     display: &'a mut DisplayAdapter,
     chunk_buffer: &'a mut [u16], // Use u16 directly to match Slint's internal pixel size
@@ -115,7 +238,6 @@ impl<'a> LineBufferProvider for SyncLineBuffer<'a> {
         // Calculate where this specific line belongs inside our 16-line chunk buffer
         let chunk_line_offset = line_index % 16;
         let start_idx = chunk_line_offset * pixel_count;
-        let end_idx = start_idx + pixel_count;
 
         let ptr = self.chunk_buffer.as_mut_ptr() as *mut Rgb565Pixel;
         let pool = unsafe { core::slice::from_raw_parts_mut(ptr.add(start_idx), pixel_count) };
@@ -147,54 +269,19 @@ impl<'a> LineBufferProvider for SyncLineBuffer<'a> {
     }
 }
 
-async fn init_display(
-    controller: &mut Controller,
+fn init_display(
+    peripherals: DisplayLCDPeripherals,
 ) -> Result<(DisplayAdapter, Channel<'static, LowSpeed>)> {
     let device_delay = Delay;
     let mut init_delay = Delay;
 
     // 1. Set up standard outputs for your display control lines
-    let tft_cs = Output::new(
-        controller
-            .peripherals
-            .GPIO10
-            .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO10"))?,
-        Level::High,
-        OutputConfig::default(),
-    );
-    let tft_rst = Output::new(
-        controller
-            .peripherals
-            .GPIO2
-            .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO2"))?,
-        Level::High,
-        OutputConfig::default(),
-    );
-    let tft_dc = Output::new(
-        controller
-            .peripherals
-            .GPIO42
-            .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO42"))?,
-        Level::Low,
-        OutputConfig::default(),
-    );
-    let bl_pin = controller
-        .peripherals
-        .GPIO39
-        .take()
-        .ok_or(CoreError::PeripheralTaken("GPIO39"))?
-        .degrade();
+    let tft_cs = Output::new(peripherals.tft_cs, Level::High, OutputConfig::default());
+    let tft_rst = Output::new(peripherals.tft_rst, Level::High, OutputConfig::default());
+    let tft_dc = Output::new(peripherals.tft_dc, Level::Low, OutputConfig::default());
+    let bl_pin = peripherals.bl_pin.degrade();
 
-    let mut ledc = Ledc::new(
-        controller
-            .peripherals
-            .LEDC
-            .take()
-            .ok_or(CoreError::PeripheralTaken("LEDC"))?,
-    );
+    let mut ledc = Ledc::new(peripherals.ledc);
     ledc.set_global_slow_clock(LSGlobalClkSource::APBClk);
 
     let mut timer0 = ledc.timer::<LowSpeed>(timer::Number::Timer0);
@@ -221,27 +308,10 @@ async fn init_display(
         .with_frequency(Rate::from_mhz(80))
         .with_mode(Mode::_0);
 
-    let spi = Spi::new(
-        (&mut controller.peripherals.SPI2)
-            .take()
-            .ok_or(CoreError::PeripheralTaken("SPI2"))?,
-        spi_config,
-    )? // Standard esp-hal result unpacker
-    .with_sck(
-        (&mut controller.peripherals.GPIO12)
-            .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO12"))?,
-    )
-    .with_mosi(
-        (&mut controller.peripherals.GPIO11)
-            .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO11"))?,
-    )
-    .with_miso(
-        (&mut controller.peripherals.GPIO38)
-            .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO38"))?,
-    );
+    let spi = Spi::new(peripherals.spi, spi_config)? // Standard esp-hal result unpacker
+        .with_sck(peripherals.spi_sck)
+        .with_mosi(peripherals.spi_mosi)
+        .with_miso(peripherals.spi_miso);
 
     let spi_device = ExclusiveDevice::new(spi, tft_cs, device_delay)?;
 
@@ -264,43 +334,24 @@ async fn init_display(
     Ok((display, tft_bl))
 }
 
-async fn init_touch(controller: &mut Controller) -> Result<(TouchAdapter, Input<'static>)> {
+async fn init_touch(
+    peripherals: DisplayTouchPeripherals,
+) -> Result<(TouchAdapter, Input<'static>)> {
     // Setup touch
-    let mut ctp_rst = Output::new(
-        (&mut controller.peripherals.GPIO21)
-            .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO21"))?,
-        Level::Low,
-        OutputConfig::default(),
-    );
+    let mut ctp_rst = Output::new(peripherals.ctp_rst, Level::Low, OutputConfig::default());
     Timer::after(Duration::from_millis(10)).await;
     ctp_rst.set_high(); // Release reset line
     Timer::after(Duration::from_millis(50)).await;
 
     let i2c_config = I2cConfig::default().with_frequency(Rate::from_khz(400)); // Standard Fast-Mode I2C
 
-    let i2c = I2c::new(
-        (&mut controller.peripherals.I2C0)
-            .take()
-            .ok_or(CoreError::PeripheralTaken("I2C0"))?,
-        i2c_config,
-    )?
-    .with_scl(
-        (&mut controller.peripherals.GPIO47)
-            .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO47"))?,
-    ) // black
-    .with_sda(
-        (&mut controller.peripherals.GPIO20)
-            .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO20"))?,
-    ) // red
-    .into_async(); // Converts driver to Embassy async non-blocking execution
+    let i2c = I2c::new(peripherals.i2c, i2c_config)?
+        .with_scl(peripherals.i2c_scl) // black
+        .with_sda(peripherals.i2c_sda) // red
+        .into_async(); // Converts driver to Embassy async non-blocking execution
 
     let touch_int = Input::new(
-        (&mut controller.peripherals.GPIO19)
-            .take()
-            .ok_or(CoreError::PeripheralTaken("GPIO19"))?,
+        peripherals.touch_int,
         esp_hal::gpio::InputConfig::default().with_pull(Pull::Up),
     );
 
@@ -322,10 +373,11 @@ pub struct DisplayManager {
 
 impl DisplayManager {
     pub(crate) async fn spawn(
-        controller: &mut Controller,
+        spawner: &Spawner,
         window: Rc<MinimalSoftwareWindow>,
+        peripherals: DisplayLCDPeripherals,
     ) -> Result<()> {
-        let (mut display, mut tft_bl) = init_display(controller).await?;
+        let (display, tft_bl) = init_display(peripherals)?;
 
         let mgr = DisplayManager {
             display,
@@ -335,7 +387,7 @@ impl DisplayManager {
             chunk_buffer: [0u16; UI_WIDTH as usize * 16],
         };
 
-        controller.spawn(display_task(mgr)?);
+        spawner.spawn(display_task(mgr)?);
 
         Ok(())
     }
@@ -405,10 +457,11 @@ pub struct TouchManager {
 
 impl TouchManager {
     pub(crate) async fn spawn(
-        controller: &mut Controller,
+        spawner: &Spawner,
         window: Rc<MinimalSoftwareWindow>,
+        peripherals: DisplayTouchPeripherals,
     ) -> Result<()> {
-        let (mut touch, mut touch_int) = init_touch(controller).await?;
+        let (touch, touch_int) = init_touch(peripherals).await?;
 
         let mgr = TouchManager {
             touch,
@@ -419,7 +472,7 @@ impl TouchManager {
             last_y: 0.0,
         };
 
-        controller.spawn(touch_task(mgr)?);
+        spawner.spawn(touch_task(mgr)?);
 
         Ok(())
     }
@@ -495,10 +548,11 @@ impl TouchManager {
 }
 
 pub async fn spawn(
-    controller: &mut Controller,
+    spawner: &Spawner,
     window: Rc<MinimalSoftwareWindow>,
-    app: AppWindow,
+    lcd_peripherals: DisplayLCDPeripherals,
+    touch_peripherals: DisplayTouchPeripherals,
 ) -> Result<()> {
-    DisplayManager::spawn(controller, window.clone()).await?;
-    TouchManager::spawn(controller, window).await
+    DisplayManager::spawn(spawner, window.clone(), lcd_peripherals).await?;
+    TouchManager::spawn(spawner, window, touch_peripherals).await
 }

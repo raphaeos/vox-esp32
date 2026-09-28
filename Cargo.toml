@@ -30,7 +30,7 @@ critical-section = "1.2.0"
 static_cell = "2.1.1"
 
 # --- Async / Scheduling ---
-embassy-executor = { version = "0.10", features = ["executor-interrupt", "executor-thread"] }
+embassy-executor = { version = "0.10", features = ["executor-thread", "executor-interrupt"] }
 embassy-time = { version = "0.5", features = ["defmt"] }
 async-channel = { version = "2.5.0", default-features = false }
 futures = { version = "0.3", default-features = false, features = ["alloc", "async-await"] }
