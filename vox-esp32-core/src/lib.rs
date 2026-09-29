@@ -10,6 +10,7 @@ extern crate alloc;
 
 #[cfg(feature = "ads111x")]
 pub mod ads111x;
+pub mod async_channel;
 pub mod common;
 pub mod controller;
 pub mod esp32;

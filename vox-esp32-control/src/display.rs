@@ -96,8 +96,18 @@ static LEDC_TIMER: StaticCell<timer::Timer<'static, LowSpeed>> = StaticCell::new
 
 pub const DISPLAY_WIDTH: u16 = 320;
 pub const DISPLAY_HEIGHT: u16 = 480;
-pub const UI_WIDTH: u16 = 480;
-pub const UI_HEIGHT: u16 = 320;
+pub const UI_WIDTH: u16 = DISPLAY_HEIGHT;
+pub const UI_HEIGHT: u16 = DISPLAY_WIDTH;
+
+pub async fn spawn(
+    spawner: &Spawner,
+    window: Rc<MinimalSoftwareWindow>,
+    lcd_peripherals: DisplayLCDPeripherals,
+    touch_peripherals: DisplayTouchPeripherals,
+) -> Result<()> {
+    DisplayManager::spawn(spawner, window.clone(), lcd_peripherals).await?;
+    TouchManager::spawn(spawner, window, touch_peripherals).await
+}
 
 pub struct DisplayLCDPeripherals {
     tft_cs: GPIO10<'static>,
@@ -219,6 +229,89 @@ impl DisplayTouchPeripherals {
     }
 }
 
+#[embassy_executor::task]
+async fn display_task(mut mgr: DisplayManager) {
+    mgr.run().await;
+}
+
+pub struct DisplayManager {
+    display: DisplayAdapter,
+    tft_bl: Channel<'static, LowSpeed>,
+    window: Rc<MinimalSoftwareWindow>,
+    screen_on: bool,
+    chunk_buffer: [u16; UI_WIDTH as usize * 16],
+}
+
+impl DisplayManager {
+    pub(crate) async fn spawn(
+        spawner: &Spawner,
+        window: Rc<MinimalSoftwareWindow>,
+        peripherals: DisplayLCDPeripherals,
+    ) -> Result<()> {
+        let (display, tft_bl) = init_display(peripherals)?;
+
+        let mgr = DisplayManager {
+            display,
+            tft_bl,
+            window,
+            screen_on: false,
+            chunk_buffer: [0u16; UI_WIDTH as usize * 16],
+        };
+
+        spawner.spawn(display_task(mgr)?);
+
+        Ok(())
+    }
+
+    async fn run(&mut self) {
+        log::info!("DisplayManager: Started");
+
+        loop {
+            if let Err(e) = self.draw().await {
+                log::error!("DisplayManager draw failed: {:?}", e);
+                Timer::after(Duration::from_millis(100)).await;
+            }
+        }
+    }
+
+    async fn draw(&mut self) -> Result<()> {
+        // Pump Slint's clock ticks so animations and property state systems update
+        slint::platform::update_timers_and_animations();
+
+        let mut ui_did_render = false;
+
+        self.window.draw_if_needed(|renderer| {
+            ui_did_render = true;
+            let start = Instant::now();
+
+            // Pipe Slint's line updates straight over the display hardware
+            renderer.render_by_line(SyncLineBuffer {
+                display: &mut self.display,
+                chunk_buffer: &mut self.chunk_buffer,
+            });
+
+            log::info!(
+                "DisplayManager: Rendered + Flushed: {}ms",
+                start.elapsed().as_millis()
+            );
+        });
+
+        if ui_did_render {
+            if !self.screen_on {
+                // Turn on screen
+                self.tft_bl
+                    .set_duty(50)
+                    .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+                self.screen_on = true;
+            }
+        } else {
+            Timer::after(Duration::from_millis(16)).await;
+        }
+
+        Ok(())
+    }
+}
+
 struct SyncLineBuffer<'a> {
     display: &'a mut DisplayAdapter,
     chunk_buffer: &'a mut [u16], // Use u16 directly to match Slint's internal pixel size
@@ -334,113 +427,6 @@ fn init_display(
     Ok((display, tft_bl))
 }
 
-async fn init_touch(
-    peripherals: DisplayTouchPeripherals,
-) -> Result<(TouchAdapter, Input<'static>)> {
-    // Setup touch
-    let mut ctp_rst = Output::new(peripherals.ctp_rst, Level::Low, OutputConfig::default());
-    Timer::after(Duration::from_millis(10)).await;
-    ctp_rst.set_high(); // Release reset line
-    Timer::after(Duration::from_millis(50)).await;
-
-    let i2c_config = I2cConfig::default().with_frequency(Rate::from_khz(400)); // Standard Fast-Mode I2C
-
-    let i2c = I2c::new(peripherals.i2c, i2c_config)?
-        .with_scl(peripherals.i2c_scl) // black
-        .with_sda(peripherals.i2c_sda) // red
-        .into_async(); // Converts driver to Embassy async non-blocking execution
-
-    let touch_int = Input::new(
-        peripherals.touch_int,
-        esp_hal::gpio::InputConfig::default().with_pull(Pull::Up),
-    );
-
-    Ok((Ft6336uAsync::new(i2c), touch_int))
-}
-
-#[embassy_executor::task]
-async fn display_task(mut mgr: DisplayManager) {
-    mgr.run().await;
-}
-
-pub struct DisplayManager {
-    display: DisplayAdapter,
-    tft_bl: Channel<'static, LowSpeed>,
-    window: Rc<MinimalSoftwareWindow>,
-    screen_on: bool,
-    chunk_buffer: [u16; UI_WIDTH as usize * 16],
-}
-
-impl DisplayManager {
-    pub(crate) async fn spawn(
-        spawner: &Spawner,
-        window: Rc<MinimalSoftwareWindow>,
-        peripherals: DisplayLCDPeripherals,
-    ) -> Result<()> {
-        let (display, tft_bl) = init_display(peripherals)?;
-
-        let mgr = DisplayManager {
-            display,
-            tft_bl,
-            window,
-            screen_on: false,
-            chunk_buffer: [0u16; UI_WIDTH as usize * 16],
-        };
-
-        spawner.spawn(display_task(mgr)?);
-
-        Ok(())
-    }
-
-    async fn run(&mut self) {
-        log::info!("DisplayManager: Started");
-
-        loop {
-            if let Err(e) = self.draw().await {
-                log::error!("DisplayManager draw failed: {:?}", e);
-                Timer::after(Duration::from_millis(100)).await;
-            }
-        }
-    }
-
-    async fn draw(&mut self) -> Result<()> {
-        // Pump Slint's clock ticks so animations and property state systems update
-        slint::platform::update_timers_and_animations();
-
-        let mut ui_did_render = false;
-
-        self.window.draw_if_needed(|renderer| {
-            ui_did_render = true;
-            let start = Instant::now();
-
-            // Pipe Slint's line updates straight over the display hardware
-            renderer.render_by_line(SyncLineBuffer {
-                display: &mut self.display,
-                chunk_buffer: &mut self.chunk_buffer,
-            });
-
-            log::info!(
-                "DisplayManager: Rendered + Flushed: {}ms",
-                start.elapsed().as_millis()
-            );
-        });
-
-        if ui_did_render {
-            if !self.screen_on {
-                // Turn on screen
-                self.tft_bl
-                    .set_duty(50)
-                    .map_err(|e| anyhow::anyhow!("{:?}", e))?;
-                self.screen_on = true;
-            }
-        } else {
-            Timer::after(Duration::from_millis(16)).await;
-        }
-
-        Ok(())
-    }
-}
-
 #[embassy_executor::task]
 async fn touch_task(mut mgr: TouchManager) {
     mgr.run().await;
@@ -547,12 +533,25 @@ impl TouchManager {
     }
 }
 
-pub async fn spawn(
-    spawner: &Spawner,
-    window: Rc<MinimalSoftwareWindow>,
-    lcd_peripherals: DisplayLCDPeripherals,
-    touch_peripherals: DisplayTouchPeripherals,
-) -> Result<()> {
-    DisplayManager::spawn(spawner, window.clone(), lcd_peripherals).await?;
-    TouchManager::spawn(spawner, window, touch_peripherals).await
+async fn init_touch(
+    peripherals: DisplayTouchPeripherals,
+) -> Result<(TouchAdapter, Input<'static>)> {
+    let mut ctp_rst = Output::new(peripherals.ctp_rst, Level::Low, OutputConfig::default());
+    Timer::after(Duration::from_millis(10)).await;
+    ctp_rst.set_high(); // Release reset line
+    Timer::after(Duration::from_millis(50)).await;
+
+    let i2c_config = I2cConfig::default().with_frequency(Rate::from_khz(400)); // Standard Fast-Mode I2C
+
+    let i2c = I2c::new(peripherals.i2c, i2c_config)?
+        .with_scl(peripherals.i2c_scl) // black
+        .with_sda(peripherals.i2c_sda) // red
+        .into_async();
+
+    let touch_int = Input::new(
+        peripherals.touch_int,
+        esp_hal::gpio::InputConfig::default().with_pull(Pull::Up),
+    );
+
+    Ok((Ft6336uAsync::new(i2c), touch_int))
 }

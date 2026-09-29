@@ -17,6 +17,7 @@ use thiserror::Error;
 use vox_esp32_core::ads111x::{
     ADSMultiProbe, Address, ProbeType, ACS758LCB_050B, QNHCK1_21_300_AMPS, V5_1,
 };
+use vox_esp32_core::async_channel::{lossy_bounded, LossyChannel};
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::esp32_led::LEDManagerHandle;
 use vox_esp32_core::Controller;
@@ -203,7 +204,7 @@ pub struct Metrics {
 }
 
 impl Metrics {
-    fn new() -> Self {
+    pub fn new() -> Self {
         Self {
             va_entries: BTreeMap::new(),
         }
@@ -337,8 +338,8 @@ async fn metrics_task(mut mgr: MetricsManager) {
 }
 
 pub struct MetricsManager {
-    m_tx: Sender<Metrics>,
-    va_tx: Sender<VAMetricEntry>,
+    m_tx: LossyChannel<Metrics>,
+    va_tx: LossyChannel<VAMetricEntry>,
     probe: ADSMultiProbe<ProbeId>,
     led: LEDManagerHandle,
     metrics: Metrics,
@@ -375,8 +376,8 @@ impl MetricsManager {
             }
         }
 
-        let (m_tx, m_rx) = bounded(10);
-        let (va_tx, va_rx) = bounded(10);
+        let (m_tx, m_rx) = lossy_bounded(10);
+        let (va_tx, va_rx) = lossy_bounded(10);
 
         let led = controller.led.clone();
 
@@ -494,14 +495,14 @@ impl MetricsManager {
     }
 
     async fn tx_metrics(&self) {
-        if let Err(e) = self.m_tx.send(self.metrics.clone()).await {
+        if let Err(e) = self.m_tx.send_lossy(self.metrics.clone()).await {
             log::error!("Failed to send Metrics message: {:?}", e);
         }
     }
 
     async fn tx_va(&self, va_id: &VAId) {
         if let Some(va_val) = self.metrics.va_entries.get(va_id) {
-            if let Err(e) = self.va_tx.send(va_val.clone()).await {
+            if let Err(e) = self.va_tx.send_lossy(va_val.clone()).await {
                 log::error!("Failed to send VAMetricEntry message: {:?}", e);
             }
         }

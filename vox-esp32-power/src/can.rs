@@ -1,13 +1,13 @@
+use crate::metrics::{VAId, VAMetricEntry};
+use crate::powmr_mppt::{MPPTResult, MPPTState, MPPTSummary};
 use anyhow::{anyhow, Result};
 use async_channel::{bounded, Receiver};
 use futures::pin_mut;
 use futures::select_biased;
 use futures::FutureExt;
+use vox_esp32_core::async_channel::lossy_bounded;
 use vox_esp32_core::Controller;
 use vox_esp32_core::{CANManagerHandle, CANRxHandler, MessageId, Priority, Topic};
-
-use crate::metrics::{VAId, VAMetricEntry};
-use crate::powmr_mppt::{MPPTResult, MPPTState, MPPTSummary};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum MessageType {
@@ -50,7 +50,7 @@ pub enum Message {
 pub fn register_handlers(
     controller: &mut Controller,
 ) -> Result<Receiver<(MessageId, MessageType, Message)>> {
-    let (tx, rx) = bounded(10);
+    let (tx, rx) = lossy_bounded(10);
     //let tx2 = tx.clone();
 
     controller.add_can_handler(CANRxHandler::new(
@@ -70,7 +70,7 @@ pub fn register_handlers(
                     }
 
                     if let Some(message) = message {
-                        tx.try_send((msg_id.clone(), message_type, message))
+                        tx.try_send_lossy((msg_id.clone(), message_type, message))
                             .map_err(|e| anyhow!("CAN handler channel full: {:?}", e))?;
                     }
                 }

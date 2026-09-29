@@ -8,6 +8,7 @@
 #![deny(clippy::large_stack_frames)]
 
 pub mod app;
+pub mod can;
 pub mod display;
 pub mod ui;
 
@@ -61,5 +62,6 @@ async fn main(spawner: Spawner) -> ! {
 }
 
 pub async fn init(controller: &mut Controller) -> anyhow::Result<()> {
-    app::start(controller).await
+    app::start(controller).await?;
+    can::start(controller).await
 }

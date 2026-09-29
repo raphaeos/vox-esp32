@@ -1,3 +1,4 @@
+use crate::async_channel::{lossy_bounded, LossyChannel};
 use crate::common::CoreError;
 use crate::esp32::Peripherals;
 use anyhow::{anyhow, Result};
@@ -193,7 +194,7 @@ enum LEDManagerMessage {
 }
 #[derive(Clone)]
 pub struct LEDManagerHandle {
-    tx: Sender<LEDManagerMessage>,
+    tx: LossyChannel<LEDManagerMessage>,
 }
 
 impl LEDManagerHandle {
@@ -206,7 +207,7 @@ impl LEDManagerHandle {
     ) -> &Self {
         let _ = self
             .tx
-            .send(LEDManagerMessage::Set(LEDSetMessage {
+            .send_lossy(LEDManagerMessage::Set(LEDSetMessage {
                 color,
                 status,
                 brightness,
@@ -219,7 +220,7 @@ impl LEDManagerHandle {
     pub async fn status(&self, status: LEDStatus) -> &Self {
         let _ = self
             .tx
-            .send(LEDManagerMessage::Set(LEDSetMessage {
+            .send_lossy(LEDManagerMessage::Set(LEDSetMessage {
                 color: None,
                 status: Some(status),
                 brightness: None,
@@ -246,7 +247,7 @@ impl LEDManagerHandle {
     ) -> &Self {
         let _ = self
             .tx
-            .send(LEDManagerMessage::Once(LEDOnceMessage {
+            .send_lossy(LEDManagerMessage::Once(LEDOnceMessage {
                 color,
                 brightness,
                 duration,
@@ -272,7 +273,7 @@ impl LEDManager {
         let mgr = LEDManager {};
         let led = LED::new(peripherals)?;
 
-        let (tx, rx) = bounded(10);
+        let (tx, rx) = lossy_bounded(10);
 
         spawner.spawn(led_task(mgr, rx, led)?);
 

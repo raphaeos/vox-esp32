@@ -1,3 +1,4 @@
+use crate::async_channel::{lossy_bounded, LossyChannel};
 use crate::common::CoreError;
 use crate::esp32_led::{LEDColor, LEDManagerHandle};
 use crate::types::{Device, DeviceType, Priority, Topic};
@@ -112,8 +113,8 @@ impl TryInto<ExtendedId> for MessageId {
 
 #[derive(Clone)]
 pub struct CANManagerHandle {
-    tx: Sender<(Priority, Topic, u32, Vec<u8>)>,
-    tx_request: Sender<(Priority, Topic, u32)>,
+    tx: LossyChannel<(Priority, Topic, u32, Vec<u8>)>,
+    tx_request: LossyChannel<(Priority, Topic, u32)>,
 }
 
 impl CANManagerHandle {
@@ -125,7 +126,7 @@ impl CANManagerHandle {
         payload: Vec<u8>,
     ) -> Result<()> {
         self.tx
-            .send((priority, topic, message_type_id, payload))
+            .send_lossy((priority, topic, message_type_id, payload))
             .await
             .map_err(|e| anyhow!("CAN tx channel closed: {}", e))
     }
@@ -137,7 +138,7 @@ impl CANManagerHandle {
         message_type_id: u32,
     ) -> Result<()> {
         self.tx_request
-            .send((priority, topic, message_type_id))
+            .send_lossy((priority, topic, message_type_id))
             .await
             .map_err(|e| anyhow!("CAN tx_request channel closed: {}", e))
     }
@@ -227,8 +228,8 @@ impl CANManager {
 
         let (can_rx, can_tx) = can.split();
 
-        let (tx, rx) = bounded(10);
-        let (tx_request, rx_request) = bounded(10);
+        let (tx, rx) = lossy_bounded(30);
+        let (tx_request, rx_request) = lossy_bounded(10);
 
         controller.spawn(can_rx_task(CANRxWorker::new(
             controller.device.clone(),
@@ -492,11 +493,11 @@ impl CANTxWorker {
 }
 
 pub struct CANTxJobWorker {
-    tx: Sender<(Priority, Topic, u32, Vec<u8>)>,
+    tx: LossyChannel<(Priority, Topic, u32, Vec<u8>)>,
 }
 
 impl CANTxJobWorker {
-    fn new(tx: Sender<(Priority, Topic, u32, Vec<u8>)>) -> Self {
+    fn new(tx: LossyChannel<(Priority, Topic, u32, Vec<u8>)>) -> Self {
         Self { tx }
     }
 
@@ -506,7 +507,7 @@ impl CANTxJobWorker {
 
             if let Err(e) = self
                 .tx
-                .send((
+                .send_lossy((
                     Priority::Default,
                     Topic::Core,
                     MessageType::Heartbeat.id(),

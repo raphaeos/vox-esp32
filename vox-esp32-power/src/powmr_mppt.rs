@@ -15,6 +15,7 @@ use esp_hal::{
 use num_enum::TryFromPrimitive;
 use serde::{Deserialize, Serialize};
 use thiserror::Error;
+use vox_esp32_core::async_channel::{lossy_bounded, LossyChannel};
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::esp32_led::{LEDManager, LEDManagerHandle, LED};
 use vox_esp32_core::Controller;
@@ -316,7 +317,7 @@ async fn mppt_task(mut mgr: MPPTManager) {
 
 pub struct MPPTManager {
     uart: Uart<'static, Async>,
-    tx: Sender<MPPTResult<MPPTState>>,
+    tx: LossyChannel<MPPTResult<MPPTState>>,
     led: LEDManagerHandle,
 }
 
@@ -341,7 +342,7 @@ impl MPPTManager {
         )
         .into_async();
 
-        let (tx, rx) = bounded(10);
+        let (tx, rx) = lossy_bounded(10);
 
         let led = controller.led.clone();
 
@@ -380,7 +381,7 @@ impl MPPTManager {
                                 .collect::<String>()
                         );
 
-                        let _ = self.tx.send(Err(MPPTError::NonSyncFrame)).await;
+                        let _ = self.tx.send_lossy(Err(MPPTError::NonSyncFrame)).await;
 
                         embassy_time::Timer::after(Duration::from_millis(3000)).await;
                         continue;
@@ -419,7 +420,7 @@ impl MPPTManager {
                             crc_rx
                         );
 
-                        let _ = self.tx.send(Err(MPPTError::CrcMissMatch)).await;
+                        let _ = self.tx.send_lossy(Err(MPPTError::CrcMissMatch)).await;
 
                         continue;
                     }
@@ -437,7 +438,7 @@ impl MPPTManager {
 
                                 let _ = self
                                     .tx
-                                    .send(Ok(MPPTState {
+                                    .send_lossy(Ok(MPPTState {
                                         master_id,
                                         battery_voltage,
                                         battery_type,
@@ -454,7 +455,7 @@ impl MPPTManager {
                             } else {
                                 let _ = self
                                     .tx
-                                    .send(Ok(MPPTState {
+                                    .send_lossy(Ok(MPPTState {
                                         master_id,
                                         battery_voltage,
                                         battery_type,
@@ -468,7 +469,7 @@ impl MPPTManager {
 
                             let _ = self
                                 .tx
-                                .send(Err(MPPTError::UnknownBatteryTypeIdx(batt_idx)))
+                                .send_lossy(Err(MPPTError::UnknownBatteryTypeIdx(batt_idx)))
                                 .await;
                         }
                     }
@@ -476,12 +477,12 @@ impl MPPTManager {
                 Ok(Err(err)) => {
                     log::warn!("MPPTManager: Read error: {:?}", err);
 
-                    let _ = self.tx.send(Err(MPPTError::ReadError(err))).await;
+                    let _ = self.tx.send_lossy(Err(MPPTError::ReadError(err))).await;
                 }
                 Err(_err) => {
                     log::warn!("MPPTManager: Timed out waiting for parallel communications");
 
-                    let _ = self.tx.send(Err(MPPTError::TimeOut)).await;
+                    let _ = self.tx.send_lossy(Err(MPPTError::TimeOut)).await;
                 }
             }
         }
