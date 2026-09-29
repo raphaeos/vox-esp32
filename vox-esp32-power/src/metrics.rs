@@ -12,7 +12,7 @@ use futures::FutureExt;
 use num_enum::TryFromPrimitive;
 use serde::{Deserialize, Serialize};
 use strum::IntoEnumIterator;
-use strum_macros::EnumIter;
+use strum_macros::{Display, EnumIter};
 use thiserror::Error;
 use vox_esp32_core::ads111x::{
     ADSMultiProbe, Address, ProbeType, ACS758LCB_050B, QNHCK1_21_300_AMPS, V5_1,
@@ -141,6 +141,7 @@ pub enum VAType {
 
 #[derive(
     Debug,
+    Display,
     Copy,
     Clone,
     PartialOrd,
@@ -200,7 +201,7 @@ impl VAId {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Metrics {
-    va_entries: BTreeMap<VAId, VAMetricEntry>,
+    pub va_entries: BTreeMap<VAId, VAMetricEntry>,
 }
 
 impl Metrics {
@@ -208,6 +209,10 @@ impl Metrics {
         Self {
             va_entries: BTreeMap::new(),
         }
+    }
+
+    pub fn apply_va(&mut self, id: VAId, va: VAMetricEntry) {
+        self.va_entries.insert(id, va);
     }
 
     fn update_va(&mut self, id: VAId, status: ProbeStatus, voltage: f32, amperage: f32) {

@@ -62,6 +62,6 @@ async fn main(spawner: Spawner) -> ! {
 }
 
 pub async fn init(controller: &mut Controller) -> anyhow::Result<()> {
-    app::start(controller).await?;
-    can::start(controller).await
+    let app_update_tx = app::start(controller).await?;
+    can::start(controller, app_update_tx).await
 }

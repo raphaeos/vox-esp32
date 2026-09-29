@@ -1,6 +1,14 @@
 import { AboutSlint, VerticalBox } from "std-widgets.slint";
 
-import { State, Page } from "common.slint";
+import {
+    State,
+    AppState,
+    PowerState,
+    PowerVAEntry,
+    PowerVAType,
+    PowerVAStatus,
+    Page,
+} from "common.slint";
 import { Sidebar } from "components/sidebar.slint";
 import {
     HomePage,
@@ -8,6 +16,14 @@ import {
 
 import "assets/NotoSans-Regular.ttf";
 import "assets/NotoSans-Medium.ttf";
+
+export {
+    PowerVAStatus,
+    PowerVAType,
+    PowerVAEntry,
+    PowerState,
+    AppState,
+}
 
 export component AppWindow inherits Window {
     title: @tr("Vox Control");

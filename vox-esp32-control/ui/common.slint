@@ -108,6 +108,17 @@ export global BaseStyle {
     out property <string> medium-weight: "Noto Sans Medium";
 }
 
+export enum PowerVAStatus { Init, Ok, Error }
+
+export enum PowerVAType { Pv, Batt }
+
+export struct PowerVAEntry { name: string, status: PowerVAStatus, type: PowerVAType, voltage: float, amperage: float }
+
+export struct PowerState {va_entries: [PowerVAEntry]}
+
+export struct AppState {power: PowerState}
+
 export global State {
     in property <Page> active-page: Page.home;
+    in property <AppState> app-state;
 }

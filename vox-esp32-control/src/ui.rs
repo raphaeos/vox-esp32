@@ -1,8 +1,10 @@
 use crate::display::{UI_HEIGHT, UI_WIDTH};
 use alloc::boxed::Box;
 use alloc::rc::Rc;
+use alloc::string::ToString;
 use anyhow::{anyhow, Result};
 use slint::platform::software_renderer::MinimalSoftwareWindow;
+use vox_esp32_power::metrics::{ProbeStatus, VAId, VAType, VAMetricEntry};
 
 slint::include_modules!();
 
@@ -40,4 +42,43 @@ pub fn init() -> Result<(Rc<MinimalSoftwareWindow>, AppWindow)> {
     ui.show().map_err(|e| anyhow!(e))?;
 
     Ok((window.clone(), ui))
+}
+
+/// Type Mappings
+
+impl From<&VAMetricEntry> for PowerVAEntry {
+    fn from(value: &VAMetricEntry) -> Self {
+        Self {
+            name: value.id.to_string().into(),
+            status: value.status.into(),
+            r#type: value.id.into(),
+            voltage: value.voltage,
+            amperage: value.amperage,
+        }
+    }
+}
+
+impl From<ProbeStatus> for PowerVAStatus {
+    fn from(value: ProbeStatus) -> Self {
+        match value {
+            ProbeStatus::Init => PowerVAStatus::Init,
+            ProbeStatus::Ok => PowerVAStatus::Ok,
+            ProbeStatus::Err(_) => PowerVAStatus::Error,
+        }
+    }
+}
+
+impl From<VAId> for PowerVAType {
+    fn from(value: VAId) -> Self {
+        value.va_type().into()
+    }
+}
+
+impl From<VAType> for PowerVAType {
+    fn from(value: VAType) -> Self {
+        match value {
+            VAType::Batt => PowerVAType::Batt,
+            VAType::Pv => PowerVAType::Pv,
+        }
+    }
 }
