@@ -25,6 +25,8 @@ target/
 #  option (not recommended) you can uncomment the following to ignore the entire idea folder.
 #.idea/
 
+**/src/slint_app.rs
+
 
 # Ignore .DS_Store file in mac
 **/.DS_Store

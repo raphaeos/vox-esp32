@@ -1,9 +1,10 @@
+use std::path::PathBuf;
+use std::{env, fs};
+
 fn main() {
     linker_be_nice();
     // make sure linkall.x is the last linker script (otherwise might cause problems with flip-link)
     println!("cargo:rustc-link-arg=-Tlinkall.x");
-    println!("cargo:rerun-if-changed=ui/app.slint");
-    println!("cargo:rerun-if-changed=ui/common.slint");
 
     slint_build::compile_with_config(
         "ui/app.slint",

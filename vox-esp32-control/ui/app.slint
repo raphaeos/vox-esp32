@@ -13,6 +13,8 @@ import {
     PowerMPPTSummary,
     PowerMPPTBatteryType,
     Page,
+    Theme,
+    BaseStyle,
 } from "common.slint";
 import { Sidebar } from "components/sidebar.slint";
 import {
@@ -33,9 +35,9 @@ export {
     PowerVAEntry,
     PowerState,
     AppState,
-    State
+    State,
+    Theme,
 }
-
 export component AppWindow inherits Window {
     title: @tr("Vox Control");
 
@@ -44,10 +46,10 @@ export component AppWindow inherits Window {
     full-screen: true;
     default-font-family: "Noto Sans";
     default-font-size: 30px;
-    background: #000000;
+    background: BaseStyle.background;
 
     Image {
-        source: @image-url("assets/background1-480x320.jpeg");
+        source: BaseStyle.background-image;
         width: parent.width;
         height: parent.height;
         image-fit: cover;

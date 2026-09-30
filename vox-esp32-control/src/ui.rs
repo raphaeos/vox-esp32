@@ -2,11 +2,17 @@ use crate::display::{UI_HEIGHT, UI_WIDTH};
 use alloc::boxed::Box;
 use alloc::rc::Rc;
 use alloc::string::ToString;
+use alloc::vec::Vec;
 use anyhow::{anyhow, Result};
-use slint::{ModelRc, SharedString, platform::software_renderer::MinimalSoftwareWindow};
-use vox_esp32_power::{metrics::{
-    Metrics, ProbeStatus, SummaryMetricEntry, VAId, VAMetricEntry, VAType, calculate_milliwatts, format_amperage, format_voltage,
-}, powmr_mppt::{BatteryType, MPPTSummary, MPPTSummaryStatus}};
+use slint::{platform::software_renderer::MinimalSoftwareWindow, ModelRc, SharedString};
+use strum::IntoEnumIterator;
+use vox_esp32_power::{
+    metrics::{
+        calculate_milliwatts, format_amperage, format_voltage, Metrics, ProbeStatus,
+        SummaryMetricEntry, SummaryMetricStatus, VAId, VAMetricEntry, VAType,
+    },
+    powmr_mppt::{BatteryType, MPPTSummary, MPPTSummaryStatus},
+};
 
 slint::include_modules!();
 
@@ -48,18 +54,16 @@ pub fn init() -> Result<(Rc<MinimalSoftwareWindow>, AppWindow)> {
 
 /// Type Mappings
 
-impl From<&Metrics> for ModelRc<PowerVAEntry> {
-    fn from(value: &Metrics) -> Self {
-        let mut va_entries: Vec<ui::PowerVAEntry> = Vec::new();
-        // Iterate enum to preserve order.
-        for va_id in VAId::iter() {
-            if let Some(entry) = value.va_entries.get(&va_id) {
-                va_entries.push(entry.into());
-            }
+pub(crate) fn extract_power_va_entries(value: &Metrics) -> ModelRc<PowerVAEntry> {
+    let mut va_entries: Vec<PowerVAEntry> = Vec::new();
+    // Iterate enum to preserve order.
+    for va_id in VAId::iter() {
+        if let Some(entry) = value.va_entries.get(&va_id) {
+            va_entries.push(entry.into());
         }
-
-        slint::ModelRc::from(&va_entries[..])
     }
+
+    ModelRc::from(&va_entries[..])
 }
 
 impl From<&VAMetricEntry> for PowerVAEntry {
@@ -130,6 +134,16 @@ impl From<SummaryMetricStatus> for PowerTypeStatus {
     }
 }
 
+impl From<Option<&MPPTSummary>> for PowerMPPTSummary {
+    fn from(value: Option<&MPPTSummary>) -> Self {
+        if let Some(value) = value {
+            value.into()
+        } else {
+            Default::default()
+        }
+    }
+}
+
 impl From<&MPPTSummary> for PowerMPPTSummary {
     fn from(value: &MPPTSummary) -> Self {
         let mut boost_voltage: f32 = 0.0;
@@ -152,9 +166,9 @@ impl From<&MPPTSummary> for PowerMPPTSummary {
         }
 
         Self {
-            status: value.status.into(),
+            status: (&value.status).into(),
             master_id: value.master_id as i32,
-            battery_type: value.status.into(),
+            battery_type: (&value.status).into(),
             battery_type_text,
             battery_soc: value.soc() as i32,
             battery_voltage: value.battery_voltage(),
@@ -162,7 +176,7 @@ impl From<&MPPTSummary> for PowerMPPTSummary {
             boost_voltage,
             boost_voltage_text,
             float_voltage,
-            float_voltage_text
+            float_voltage_text,
         }
     }
 }
@@ -179,7 +193,7 @@ impl From<&MPPTSummaryStatus> for PowerMPPTStatus {
 
 impl From<&MPPTSummaryStatus> for PowerMPPTBatteryType {
     fn from(value: &MPPTSummaryStatus) -> Self {
-        if let MPPTSummaryStatus::Ok(battery_type) = value.status {
+        if let MPPTSummaryStatus::Ok(battery_type) = value {
             match battery_type {
                 BatteryType::SEL => PowerMPPTBatteryType::SEL,
                 BatteryType::GEL => PowerMPPTBatteryType::GEL,

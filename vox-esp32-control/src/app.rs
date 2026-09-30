@@ -1,5 +1,5 @@
 use crate::display::{DisplayLCDPeripherals, DisplayTouchPeripherals};
-use crate::ui::AppWindow;
+use crate::ui::{extract_power_va_entries, AppWindow};
 use crate::{display, ui};
 use alloc::vec::Vec;
 use anyhow::{anyhow, Result};
@@ -9,7 +9,6 @@ use embassy_executor::Spawner;
 use esp_rtos::embassy::Executor;
 use slint::ComponentHandle;
 use static_cell::StaticCell;
-use strum::IntoEnumIterator;
 use vox_esp32_core::async_channel::{lossy_bounded, LossyChannel};
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::Controller;
@@ -129,10 +128,10 @@ impl AppSyncManager {
         ))?;
 
         let power_state = ui::PowerState {
-            va_entries: update.power_metrics.into(),
+            va_entries: extract_power_va_entries(&update.power_metrics),
             batt_summary: batt_summary.into(),
             pv_summary: pv_summary.into(),
-            mppt_summary: update.power_mppt.into()
+            mppt_summary: update.power_mppt.as_ref().into(),
         };
 
         self.ui

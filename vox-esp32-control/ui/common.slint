@@ -1,6 +1,6 @@
 export enum Page { home, lights, power, hotwater, devices, settings }
 
-export enum Theme { Gradient, Minimalist, Vibrant, Glass }
+export enum Theme { ShootingStars, MagicKingdom, Verdant, WhiteDeer }
 
 struct SideBarTheme {
     icon-border-radius: length,
@@ -14,14 +14,56 @@ struct SideBarTheme {
 }
 
 export global ComponentTheme {
-    out property <SideBarTheme> side-bar: default;
+    out property <SideBarTheme> side-bar: {
+        if State.active-theme == Theme.MagicKingdom {
+            magic-kingdom
+        } else if State.active-theme == Theme.Verdant {
+            verdant
+        } else if State.active-theme == Theme.WhiteDeer {
+            white-deer
+        } else {
+            shooting-stars
+        }
+    }
 
-    property <SideBarTheme> default: {
+    property <SideBarTheme> shooting-stars: {
         icon-image-size: 24px,
         icon-size: 40px,
         icon-border-radius: 16px,
         background: rgba(0, 0, 0, 0.5),
-        //active-background: @linear-gradient(135deg, #655eff 0%, #aa48ff 100%),
+        active-background: #37c0db,
+        active-icon-color: Colors.white,
+        inactive-icon-color: #3343af,
+        separator: Colors.white,
+    };
+
+    property <SideBarTheme> magic-kingdom: {
+        icon-image-size: 24px,
+        icon-size: 40px,
+        icon-border-radius: 16px,
+        background: rgba(0, 0, 0, 0.5),
+        active-background: #37c0db,
+        active-icon-color: Colors.white,
+        inactive-icon-color: #3343af,
+        separator: Colors.white,
+    };
+
+    property <SideBarTheme> verdant: {
+        icon-image-size: 24px,
+        icon-size: 40px,
+        icon-border-radius: 16px,
+        background: rgba(0, 0, 0, 0.5),
+        active-background: #37c0db,
+        active-icon-color: Colors.white,
+        inactive-icon-color: #3343af,
+        separator: Colors.white,
+    };
+
+    property <SideBarTheme> white-deer: {
+        icon-image-size: 24px,
+        icon-size: 40px,
+        icon-border-radius: 16px,
+        background: rgba(0, 0, 0, 0.5),
         active-background: #37c0db,
         active-icon-color: Colors.white,
         inactive-icon-color: #3343af,
@@ -31,6 +73,7 @@ export global ComponentTheme {
 
 struct ModeColors {
     background: brush,
+    background-image: image,
     primary: color,
     secondary: color,
     text-primary: color,
@@ -52,10 +95,91 @@ struct ModeColors {
 }
 
 export global BaseStyle {
-    property <ModeColors> current-theme: default;
+    property <ModeColors> current-theme: {
+        if State.active-theme == Theme.MagicKingdom {
+            magic-kingdom
+        } else if State.active-theme == Theme.Verdant {
+            verdant
+        } else if State.active-theme == Theme.WhiteDeer {
+            white-deer
+        } else {
+            shooting-stars
+        }
+    }
 
-    property <ModeColors> default: {
-        background: #f5f4ff,
+    property <ModeColors> shooting-stars: {
+        background: #000000,
+        background-image: @image-url("assets/background1-480x320.jpeg"),
+        primary: #6036f8,
+        secondary: #e9d4ff,
+        text-primary: #6036f8,
+        text-secondary: #aa48ff,
+        text-tertiary: #bd37fa,
+        primary-button: #a34bff,
+        destructive-button: #a24642,
+        primary-button-text-color: #FFFFFF,
+        destructive-button-text-color: #FFFFFF,
+        color-button-gradient: @linear-gradient(90deg, #ff6567 0%, #fec500 50%, #c787f3 100%),
+        grayscale-button-gradient: @linear-gradient(90deg, #99a1af 0%, #4a5565 100%),
+        spinbox-button-gradient: #8753ff,
+        spinbox-button-border: #00000000,
+        spinbox-text-color: #FFFFFF,
+        header-background: #f5f4ff,
+        header-separator: #dab2ff,
+        home-button-border: #00000000,
+        home-button-text-color: #FFFFFF,
+    };
+
+    property <ModeColors> magic-kingdom: {
+        background: #000000,
+        background-image: @image-url("assets/background2-480x320.png"),
+        primary: #6036f8,
+        secondary: #e9d4ff,
+        text-primary: #6036f8,
+        text-secondary: #aa48ff,
+        text-tertiary: #bd37fa,
+        primary-button: #a34bff,
+        destructive-button: #a24642,
+        primary-button-text-color: #FFFFFF,
+        destructive-button-text-color: #FFFFFF,
+        color-button-gradient: @linear-gradient(90deg, #ff6567 0%, #fec500 50%, #c787f3 100%),
+        grayscale-button-gradient: @linear-gradient(90deg, #99a1af 0%, #4a5565 100%),
+        spinbox-button-gradient: #8753ff,
+        spinbox-button-border: #00000000,
+        spinbox-text-color: #FFFFFF,
+        header-background: #f5f4ff,
+        header-separator: #dab2ff,
+        home-button-border: #00000000,
+        home-button-text-color: #FFFFFF,
+    };
+
+    property <ModeColors> verdant: {
+        background: #000000,
+        background-image: @image-url("assets/background3-480x320.png"),
+        primary: #6036f8,
+        secondary: #e9d4ff,
+        text-primary: #6036f8,
+        text-secondary: #aa48ff,
+        text-tertiary: #bd37fa,
+        primary-button: #a34bff,
+        destructive-button: #a24642,
+        primary-button-text-color: #FFFFFF,
+        destructive-button-text-color: #FFFFFF,
+        color-button-gradient: @linear-gradient(90deg, #ff6567 0%, #fec500 50%, #c787f3 100%),
+        grayscale-button-gradient: @linear-gradient(90deg, #99a1af 0%, #4a5565 100%),
+        spinbox-button-gradient: #8753ff,
+        spinbox-button-border: #00000000,
+        spinbox-text-color: #FFFFFF,
+        header-background: #f5f4ff,
+        header-separator: #dab2ff,
+        home-button-border: #00000000,
+        home-button-text-color: #FFFFFF,
+    };
+
+
+    property <ModeColors> white-deer: {
+        background: #000000,
+        background-image: @image-url("assets/background4-480x320.png"),
         primary: #6036f8,
         secondary: #e9d4ff,
         text-primary: #6036f8,
@@ -77,6 +201,7 @@ export global BaseStyle {
     };
 
     out property <color> background: current-theme.background;
+    out property <image> background-image: current-theme.background-image;
     out property <color> primary: current-theme.primary;
     out property <color> secondary: current-theme.secondary;
     out property <color> text-primary: current-theme.text-primary;
@@ -119,23 +244,23 @@ export struct PowerVAEntry {
     voltage: float, 
     voltage_text: string,
     amperage: float,
-    amperage_text: float,
+    amperage_text: string,
     wattage: float,
-    wattage_text: float
+    wattage_text: string
 }
 
 export enum PowerTypeStatus { Init, Ok, Degraded, Error }
 
 export struct PowerTypeSummary { 
     name: string,
-    status: PowerVAStatus,
-    type: PowerTypeStatus,
+    status: PowerTypeStatus,
+    type: PowerVAType,
     voltage: float, 
     voltage_text: string,
     amperage: float,
-    amperage_text: float,
+    amperage_text: string,
     wattage: float,
-    wattage_text: float
+    wattage_text: string
 }
 
 export enum PowerMPPTStatus { Init, Ok, Error }
@@ -183,5 +308,6 @@ export struct AppState {power: PowerState}
 
 export global State {
     in property <Page> active-page: Page.home;
+    in property <Theme> active-theme: Theme.ShootingStars;
     in property <AppState> app-state;
 }
