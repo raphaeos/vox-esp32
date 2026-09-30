@@ -7,6 +7,11 @@ import {
     PowerVAEntry,
     PowerVAType,
     PowerVAStatus,
+    PowerTypeSummary,
+    PowerTypeStatus,
+    PowerMPPTStatus,
+    PowerMPPTSummary,
+    PowerMPPTBatteryType,
     Page,
 } from "common.slint";
 import { Sidebar } from "components/sidebar.slint";
@@ -18,11 +23,17 @@ import "assets/NotoSans-Regular.ttf";
 import "assets/NotoSans-Medium.ttf";
 
 export {
+    PowerMPPTSummary,
+    PowerMPPTStatus,
+    PowerMPPTBatteryType,
+    PowerTypeSummary,
+    PowerTypeStatus,
     PowerVAStatus,
     PowerVAType,
     PowerVAEntry,
     PowerState,
     AppState,
+    State
 }
 
 export component AppWindow inherits Window {

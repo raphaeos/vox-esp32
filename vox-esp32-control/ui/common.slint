@@ -112,9 +112,72 @@ export enum PowerVAStatus { Init, Ok, Error }
 
 export enum PowerVAType { Pv, Batt }
 
-export struct PowerVAEntry { name: string, status: PowerVAStatus, type: PowerVAType, voltage: float, amperage: float }
+export struct PowerVAEntry { 
+    name: string,
+    status: PowerVAStatus,
+    type: PowerVAType,
+    voltage: float, 
+    voltage_text: string,
+    amperage: float,
+    amperage_text: float,
+    wattage: float,
+    wattage_text: float
+}
 
-export struct PowerState {va_entries: [PowerVAEntry]}
+export enum PowerTypeStatus { Init, Ok, Degraded, Error }
+
+export struct PowerTypeSummary { 
+    name: string,
+    status: PowerVAStatus,
+    type: PowerTypeStatus,
+    voltage: float, 
+    voltage_text: string,
+    amperage: float,
+    amperage_text: float,
+    wattage: float,
+    wattage_text: float
+}
+
+export enum PowerMPPTStatus { Init, Ok, Error }
+
+export enum PowerMPPTBatteryType {
+    None,
+    SEL,
+    GEL,
+    Fld,
+    L04,
+    L07,
+    L08,
+    L15,
+    L16,
+    N03,
+    N06,
+    N07,
+    N13,
+    N14,
+    USE
+}
+
+export struct PowerMPPTSummary { 
+    status: PowerMPPTStatus,
+    master_id: int,
+    battery_type: PowerMPPTBatteryType,
+    battery_type_text: string,
+    battery_soc: int,
+    battery_voltage: float,
+    battery_voltage_text: string,
+    boost_voltage: float,
+    boost_voltage_text: string,
+    float_voltage: float,
+    float_voltage_text: string
+}
+
+export struct PowerState {
+    va_entries: [PowerVAEntry],
+    pv_summary: PowerTypeSummary,
+    batt_summary: PowerTypeSummary,
+    mppt_summary: PowerMPPTSummary
+}
 
 export struct AppState {power: PowerState}
 

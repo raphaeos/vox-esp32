@@ -167,7 +167,9 @@ impl VoltageDividerProbe {
 impl Probe for VoltageDividerProbe {
     fn calculate(&self, raw_voltage: f32) -> Result<ProbeValue> {
         if self.multiplier > 0.0 {
-            let raw_corrected = (raw_voltage + self.zero_offset) * 1000.0;
+            const VOLTS_TO_MILLIVOLTS: f32 = 1_000.0;
+            
+            let raw_corrected = (raw_voltage + self.zero_offset) * VOLTS_TO_MILLIVOLTS;
             let val = (raw_corrected * self.multiplier) + self.zero_offset;
 
             log::trace!(

@@ -1,4 +1,4 @@
-use crate::metrics::{ProbeStatus, VAId};
+use crate::metrics::{ProbeStatus, VAId, format_voltage};
 use alloc::format;
 use alloc::string::String;
 use alloc::vec::Vec;
@@ -276,6 +276,50 @@ impl MPPTSummary {
         }
 
         Ok((bytes))
+    }
+
+    pub fn battery_voltage(&self) -> f32 {
+        self.battery_voltage as f32 / 10.0
+    }
+
+    pub fn format_battery_voltage(&self) -> String {
+        format!("{:.1} V", self.battery_voltage())
+    }
+
+    pub fn boost_voltage(&self) -> Option<f32> {
+        if let Some(v) = self.boost_voltage {
+            Some(v as f32 / 10.0)
+        } else {
+            None
+        }
+    }
+
+    pub fn format_boost_voltage(&self) -> Option<String> {
+        if let Some(v) = self.boost_voltage() {
+            Some(format!("{:.1} V", v))
+        } else {
+            None
+        }
+    }
+
+    pub fn float_voltage(&self) -> Option<f32> {
+        if let Some(v) = self.float_voltage {
+            Some(v as f32 / 10.0)
+        } else {
+            None
+        }
+    }
+
+    pub fn format_float_voltage(&self) -> Option<String> {
+        if let Some(v) = self.float_voltage() {
+            Some(format!("{:.1} V", v))
+        } else {
+            None
+        }
+    }
+
+    pub fn soc(&self) -> u8 {
+        battery_voltage_soc(self.battery_voltage())
     }
 }
 

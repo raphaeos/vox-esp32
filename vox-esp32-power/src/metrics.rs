@@ -22,6 +22,13 @@ use vox_esp32_core::common::CoreError;
 use vox_esp32_core::esp32_led::LEDManagerHandle;
 use vox_esp32_core::Controller;
 
+pub const POWER_UNIT_VOLTS: &'static str = "V";
+pub const POWER_UNIT_MILLI_VOLTS: &'static str = "mV";
+pub const POWER_UNIT_AMPS: &'static str = "A";
+pub const POWER_UNIT_MILLI_AMPS: &'static str = "mA";
+pub const POWER_UNIT_WATTS: &'static str = "W";
+pub const POWER_UNIT_MILLI_WATTS: &'static str = "mW";
+
 const VOLTAGE_DIVIDER_R1: f32 = 181400.0;
 const VOLTAGE_DIVIDER_R1_WIRE: f32 = 0.65;
 const VOLTAGE_DIVIDER_R2: f32 = 6038.0;
@@ -133,7 +140,7 @@ impl ProbeId {
     }
 }
 
-#[derive(Debug, Clone, Copy, Serialize, Deserialize)]
+#[derive(Debug, Display, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, EnumIter, Serialize, Deserialize)]
 pub enum VAType {
     Batt,
     Pv,
@@ -234,6 +241,115 @@ impl Metrics {
             })
             .or_insert_with(|| VAMetricEntry::new(id, status, 0.0, 0.0));
     }
+
+    pub fn summary(&self) -> MetricsSummary {
+        self.into()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MetricsSummary {
+    pub types: BTreeMap<VAType, SummaryMetricEntry>,
+}
+
+impl From<&Metrics> for MetricsSummary {
+    fn from(value: &Metrics) -> Self {
+        let mut types: BTreeMap<VAType, SummaryMetricEntry> = BTreeMap::new();
+
+        for (_, entry) in value.va_entries.iter() {
+            if let Some(type_entry) = types.get_mut(&entry.id.va_type()) {
+                type_entry.voltage += entry.voltage;
+                type_entry.amperage += entry.amperage;
+                type_entry.wattage += entry.wattage;
+
+                match entry.status {
+                    ProbeStatus::Init => {
+                        if type_entry.status != SummaryMetricStatus::Init {
+                            type_entry.status = entry.status.into();
+                        }
+                    },
+                    ProbeStatus::Ok => {
+                        match type_entry.status {
+                            SummaryMetricStatus::Ok | SummaryMetricStatus::Degraded  => {}, // Do not change
+                            SummaryMetricStatus::Init => type_entry.status = entry.status.into(),
+                            SummaryMetricStatus::Error => type_entry.status = SummaryMetricStatus::Degraded, 
+                        }
+                    },
+                    ProbeStatus::Err(probe_error) => {
+                        match type_entry.status {
+                            SummaryMetricStatus::Error | SummaryMetricStatus::Degraded  => {}, // Do not change
+                            SummaryMetricStatus::Init => type_entry.status = entry.status.into(),
+                            SummaryMetricStatus::Ok => type_entry.status = SummaryMetricStatus::Degraded, 
+                        }
+                    }
+                }
+            } else {
+                types.insert(entry.id.va_type(), SummaryMetricEntry { 
+                    r#type: entry.id.va_type(), 
+                    status: entry.status.into(), 
+                    voltage: entry.voltage, 
+                    amperage: entry.amperage, 
+                    wattage: entry.wattage
+                });
+            }
+        }
+
+        // Ensure we have stubs.
+        for va_type in VAType::iter() {
+            if !types.contains_key(&va_type) {
+                types.insert(va_type, SummaryMetricEntry { 
+                    r#type: va_type, 
+                    status: SummaryMetricStatus::Init, 
+                    voltage: 0.0, 
+                    amperage: 0.0, 
+                    wattage: 0.0
+                });
+            }
+        }
+
+        Self { types }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SummaryMetricEntry {
+    pub r#type: VAType,
+    pub status: SummaryMetricStatus,
+    pub voltage: f32,
+    pub amperage: f32,
+    pub wattage: f32
+}
+
+impl SummaryMetricEntry {
+    pub fn format_voltage(&self) -> String {
+        format_voltage(self.voltage)
+    }
+
+    pub fn format_amperage(&self) -> String {
+        format_amperage(self.amperage)
+    }
+
+    pub fn format_wattage(&self) -> String {
+        format_wattage(self.wattage)
+    }
+}
+
+#[derive(Copy, Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SummaryMetricStatus {
+    Init,
+    Ok,
+    Degraded,
+    Error
+}
+
+impl From<ProbeStatus> for SummaryMetricStatus {
+    fn from(value: ProbeStatus) -> Self {
+        match value {
+            ProbeStatus::Init => Self::Init,
+            ProbeStatus::Ok => Self::Ok,
+            ProbeStatus::Err(_) => Self::Error,
+        }
+    }
 }
 
 #[derive(Error, Copy, Clone, Debug, Serialize, Deserialize, TryFromPrimitive)]
@@ -282,6 +398,7 @@ pub struct VAMetricEntry {
     pub status: ProbeStatus,
     pub voltage: f32,
     pub amperage: f32,
+    pub wattage: f32
 }
 
 impl VAMetricEntry {
@@ -291,6 +408,7 @@ impl VAMetricEntry {
             status,
             voltage,
             amperage,
+            wattage: calculate_milliwatts(voltage, amperage)
         }
     }
 
@@ -309,6 +427,7 @@ impl VAMetricEntry {
             status,
             voltage: voltage as f32,
             amperage: amperage as f32,
+            wattage: calculate_milliwatts(voltage as f32, amperage as f32)
         })
     }
 
@@ -334,6 +453,18 @@ impl VAMetricEntry {
         bytes[4..8].copy_from_slice(&amperage.to_le_bytes());
 
         Ok((bytes))
+    }
+
+    pub fn format_voltage(&self) -> String {
+        format_voltage(self.voltage)
+    }
+
+    pub fn format_amperage(&self) -> String {
+        format_amperage(self.amperage)
+    }
+
+    pub fn format_wattage(&self) -> String {
+        format_wattage(self.wattage)
     }
 }
 
@@ -512,4 +643,57 @@ impl MetricsManager {
             }
         }
     }
+}
+
+const MV_PER_V: f32 = 1_000.0;
+
+pub fn format_voltage(mv: f32) -> String {
+    let (value, unit) = if mv.abs() >= MV_PER_V {
+        (mv / MV_PER_V, POWER_UNIT_VOLTS)
+    } else {
+        (mv, POWER_UNIT_MILLI_VOLTS)
+    };
+
+    format_power_unit(value, unit)
+}
+
+const MA_PER_A: f32 = 1_000.0;
+
+pub fn format_amperage(ma: f32) -> String {
+    let (value, unit) = if ma.abs() >= MV_PER_V {
+        (ma / MA_PER_A, POWER_UNIT_AMPS)
+    } else {
+        (ma, POWER_UNIT_MILLI_AMPS)
+    };
+
+    format_power_unit(value, unit)
+}
+
+const MICROWATTS_TO_MILLIWATTS: f32 = 1_000.0;
+
+pub fn calculate_milliwatts(mv: f32, ma: f32) -> f32 {
+    (mv * ma) / MICROWATTS_TO_MILLIWATTS
+}
+
+const MW_PER_W: f32 = 1_000.0;
+
+pub fn format_wattage(mw: f32) -> String {
+    let (value, unit) = if mw.abs() >= MV_PER_V {
+        (mw / MW_PER_W, POWER_UNIT_WATTS)
+    } else {
+        (mw, POWER_UNIT_MILLI_WATTS)
+    };
+
+    format_power_unit(value, unit)
+}
+
+pub fn format_power_unit(value: f32, unit: &str) -> String {
+    let decimals = match value.abs() {
+        x if x >= 100.0 => 0,
+        x if x >= 10.0 => 1,
+        x if x >= 1.0 => 2,
+        _ => 3,
+    };
+
+    format!("{:.*} {}", decimals, value, unit)
 }

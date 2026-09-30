@@ -1,19 +1,20 @@
-use alloc::vec::Vec;
-use anyhow::Result;
 use crate::display::{DisplayLCDPeripherals, DisplayTouchPeripherals};
 use crate::ui::AppWindow;
 use crate::{display, ui};
+use alloc::vec::Vec;
+use anyhow::{anyhow, Result};
 use async_channel::Receiver;
 use core::ptr::addr_of_mut;
 use embassy_executor::Spawner;
 use esp_rtos::embassy::Executor;
+use slint::ComponentHandle;
 use static_cell::StaticCell;
+use strum::IntoEnumIterator;
 use vox_esp32_core::async_channel::{lossy_bounded, LossyChannel};
 use vox_esp32_core::common::CoreError;
 use vox_esp32_core::Controller;
-use vox_esp32_power::metrics::{Metrics, VAId};
+use vox_esp32_power::metrics::{Metrics, VAId, VAType};
 use vox_esp32_power::powmr_mppt::MPPTSummary;
-use strum::IntoEnumIterator;
 
 static mut APP_CORE_STACK: esp_hal::system::Stack<65536> = esp_hal::system::Stack::new();
 
@@ -119,19 +120,24 @@ impl AppSyncManager {
     }
 
     async fn sync_app_state(&mut self, update: AppSyncState) -> Result<()> {
-
-        // Iterate in order so we create the data in order
-        let mut va_entries: Vec<ui::PowerVAEntry> = Vec::new();
-        for va_id in VAId::iter() {
-            if let Some(entry) = update.power_metrics.va_entries.get(&va_id) {
-                let ui_entry: ui::PowerVAEntry = entry.into();
-                va_entries.push(ui_entry);
-            }
-        }
+        let power_summary = update.power_metrics.summary();
+        let batt_summary = power_summary.types.get(&VAType::Batt).ok_or(anyhow!(
+            "Expected to have VAType::Batt in power metrics summary"
+        ))?;
+        let pv_summary = power_summary.types.get(&VAType::Pv).ok_or(anyhow!(
+            "Expected to have VAType::Pv in power metrics summary"
+        ))?;
 
         let power_state = ui::PowerState {
-            va_entries: slint::ModelRc::from(&va_entries[..]),
+            va_entries: update.power_metrics.into(),
+            batt_summary: batt_summary.into(),
+            pv_summary: pv_summary.into(),
+            mppt_summary: update.power_mppt.into()
         };
+
+        self.ui
+            .global::<ui::State>()
+            .set_app_state(ui::AppState { power: power_state });
 
         Ok(())
     }
