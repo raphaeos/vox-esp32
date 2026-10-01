@@ -4,8 +4,10 @@ use crate::{display, ui};
 use alloc::vec::Vec;
 use anyhow::{anyhow, Result};
 use async_channel::Receiver;
+use core::ops::Sub;
 use core::ptr::addr_of_mut;
 use embassy_executor::Spawner;
+use embassy_time::{Duration, Timer};
 use esp_hal::time::Instant;
 use esp_rtos::embassy::Executor;
 use ft6336u_dd::TouchData;
@@ -29,8 +31,9 @@ const BRIGHTNESS_OFF: u8 = 0;
 const BRIGHTNESS_DIMMED: u8 = 20;
 const BRIGHTNESS_ON: u8 = 70;
 
-const SCREENSAVER_DIM_SCREEN_DELAY_MS: u32 = 30 * 1000; // 30 Seconds
-const SCREENSAVER_ON_DELAY_MS: u32 = 5 * 60 * 1000; // 5 Minutes
+const SCREENSAVER_DIM_SCREEN_DELAY_MS: u64 = 30 * 1000; // 30 Seconds
+const SCREENSAVER_ON_DELAY_MS: u64 = 5 * 60 * 1000; // 5 Minutes
+const SCREENSAVER_CYCLE_DELAY_MS: u64 = 1 * 60 * 1000; // 1 Minute
 
 #[embassy_executor::task]
 async fn app_task(
@@ -53,7 +56,22 @@ async fn app_task(
     .await
     .expect("Failed to spawn app task");
 
-    let sync_mgr = AppSyncManager::new(ui, app_update_rx, touched_rx, brightness_tx);
+    let screensaver_cfg = AppScreenSaverCfg::new(
+        SCREENSAVER_DIM_SCREEN_DELAY_MS,
+        SCREENSAVER_ON_DELAY_MS,
+        SCREENSAVER_CYCLE_DELAY_MS,
+        BRIGHTNESS_OFF,
+        BRIGHTNESS_ON,
+        BRIGHTNESS_DIMMED,
+    );
+
+    let sync_mgr = AppSyncManager::new(
+        ui,
+        screensaver_cfg,
+        app_update_rx,
+        touched_rx,
+        brightness_tx,
+    );
 
     spawner.spawn(app_sync_task(sync_mgr).expect("Failed to spawn app sync task"));
 }
@@ -116,13 +134,13 @@ pub(crate) struct AppSyncManager {
     ui: AppWindow,
     app_update_rx: Receiver<AppSyncState>,
     touched_rx: Receiver<TouchData>,
-    last_touch: Instant,
-    set_brightness_tx: LossyChannel<u8>,
+    screensaver_mgr: AppScreenSaverManager,
 }
 
 impl AppSyncManager {
     fn new(
         ui: AppWindow,
+        screensaver_cfg: AppScreenSaverCfg,
         app_update_rx: Receiver<AppSyncState>,
         touched_rx: Receiver<TouchData>,
         set_brightness_tx: LossyChannel<u8>,
@@ -131,8 +149,7 @@ impl AppSyncManager {
             ui,
             app_update_rx,
             touched_rx,
-            last_touch: Instant::now(),
-            set_brightness_tx,
+            screensaver_mgr: AppScreenSaverManager::new(screensaver_cfg, set_brightness_tx),
         }
     }
 
@@ -140,14 +157,18 @@ impl AppSyncManager {
         loop {
             let app_update_rx_fut = self.app_update_rx.recv().fuse();
             let touched_rx_fut = self.touched_rx.recv().fuse();
+            let screensaver_timeout_fut =
+                Timer::after(self.screensaver_mgr.update(&mut self.ui).await).fuse();
 
-            pin_mut!(app_update_rx_fut, touched_rx_fut);
+            pin_mut!(app_update_rx_fut, touched_rx_fut, screensaver_timeout_fut);
 
             select_biased! {
                 msg_res = touched_rx_fut => {
                     match msg_res {
                         Ok(_) => {
-                            self.last_touch = Instant::now();
+                            if let Err(e) = self.screensaver_mgr.touched(&mut self.ui).await {
+                                log::error!("Failed to trigger touched event for AppScreenSaverManager");
+                            }
                         }
                         Err(e) => {
                             log::error!("Failed to receive touch event from rx: {:?}", e);
@@ -165,6 +186,9 @@ impl AppSyncManager {
                             log::error!("Failed to receive app update from rx: {:?}", e);
                         }
                     }
+                }
+                _ = screensaver_timeout_fut => {
+                    // Timeout (will process update at top of loop)
                 }
             }
         }
@@ -191,5 +215,135 @@ impl AppSyncManager {
             .set_app_state(ui::AppState { power: power_state });
 
         Ok(())
+    }
+}
+
+struct AppScreenSaverCfg {
+    delay_dim: Duration,
+    delay_on: Duration,
+    delay_cycle: Duration,
+    brightness_off: u8,
+    brightness_on: u8,
+    brightness_dimmed: u8,
+}
+
+impl AppScreenSaverCfg {
+    fn new(
+        delay_dim: u64,
+        delay_on: u64,
+        delay_cycle: u64,
+        brightness_off: u8,
+        brightness_on: u8,
+        brightness_dimmed: u8,
+    ) -> Self {
+        Self {
+            delay_dim: Duration::from_millis(delay_dim),
+            delay_on: Duration::from_millis(delay_on),
+            delay_cycle: Duration::from_millis(delay_cycle),
+            brightness_off,
+            brightness_on,
+            brightness_dimmed,
+        }
+    }
+}
+
+struct AppScreenSaverManager {
+    cfg: AppScreenSaverCfg,
+    set_brightness_tx: LossyChannel<u8>,
+    curent_brightness: u8,
+    screensaver_on: bool,
+    last_cycle: Instant,
+    last_touch: Instant,
+}
+
+impl AppScreenSaverManager {
+    fn new(cfg: AppScreenSaverCfg, set_brightness_tx: LossyChannel<u8>) -> Self {
+        Self {
+            cfg,
+            set_brightness_tx,
+            curent_brightness: 0, // Unset.
+            screensaver_on: false,
+            last_cycle: Instant::now(),
+            last_touch: Instant::now(),
+        }
+    }
+
+    async fn update(&mut self, ui: &mut AppWindow) -> Duration {
+        let mut next_wait: Duration;
+
+        let elapsed = Duration::from_micros(self.last_touch.elapsed().as_micros());
+        if elapsed.ge(&self.cfg.delay_on) {
+            // Screensaver on
+            let mut elapsed_cycle = Duration::from_micros(self.last_cycle.elapsed().as_micros());
+            if elapsed_cycle.ge(&self.cfg.delay_cycle) {
+                self.cycle_screensaver(ui).await;
+                elapsed_cycle = Duration::from_micros(self.last_cycle.elapsed().as_micros());
+            }
+
+            self.enable_screensaver(ui).await;
+            self.set_brightness(self.cfg.brightness_dimmed).await;
+            next_wait = self.cfg.delay_cycle.sub(elapsed_cycle);
+        } else if elapsed.ge(&self.cfg.delay_dim) {
+            // Screen dimmed
+            self.disable_screensaver(ui).await;
+            self.set_brightness(self.cfg.brightness_dimmed).await;
+            next_wait = self.cfg.delay_on.sub(elapsed);
+        } else {
+            // Screen normal
+            self.disable_screensaver(ui).await;
+            self.set_brightness(self.cfg.brightness_on).await;
+            next_wait = self.cfg.delay_dim.sub(elapsed);
+        }
+
+        next_wait
+    }
+
+    async fn touched(&mut self, ui: &mut AppWindow) -> Result<()> {
+        self.last_touch = Instant::now();
+
+        Ok(())
+    }
+
+    async fn set_brightness(&mut self, brightness: u8) {
+        if self.curent_brightness != brightness {
+            if let Err(e) = self.set_brightness_tx.send_lossy(brightness).await {
+                log::error!("Failed to send set brightness message: {:?}", e);
+            } else {
+                self.curent_brightness = brightness;
+            }
+        }
+    }
+
+    async fn enable_screensaver(&mut self, ui: &mut AppWindow) {
+        if !ui.global::<ui::State>().get_screensaver_active() {
+            ui.global::<ui::State>().set_screensaver_active(true);
+            self.last_cycle = Instant::now();
+        }
+    }
+
+    async fn cycle_screensaver(&mut self, ui: &mut AppWindow) {
+        let active_theme = ui.global::<ui::State>().get_active_theme();
+
+        let next_theme = match active_theme {
+            ui::Theme::ShootingStars => ui::Theme::MagicKingdom,
+            ui::Theme::MagicKingdom => ui::Theme::Verdant,
+            ui::Theme::Verdant => ui::Theme::WhiteDeer,
+            ui::Theme::WhiteDeer => ui::Theme::ShootingStars,
+        };
+
+        ui.global::<ui::State>().set_active_theme(next_theme);
+
+        self.last_cycle = Instant::now();
+    }
+
+    async fn disable_screensaver(&mut self, ui: &mut AppWindow) {
+        let cfg_theme = ui.global::<ui::State>().get_config_theme();
+        if ui.global::<ui::State>().get_active_theme() != cfg_theme {
+            ui.global::<ui::State>().set_active_theme(cfg_theme);
+        }
+
+        if ui.global::<ui::State>().get_screensaver_active() {
+            ui.global::<ui::State>().set_screensaver_active(false);
+        }
     }
 }
