@@ -1,19 +1,142 @@
 import { Page, Header } from "./page.slint";
 import { BaseStyle } from "../common.slint";
 
+component HomeTile inherits Rectangle {
+    background: rgba(0, 0, 0, 0.5);
+    border-radius: 8px;
+    width: (BaseStyle.content-area-width / 2) - 13px;
+    height: (BaseStyle.content-area-height / 2) - 13px;
+
+    @children
+}
+
+component PowerHomeTile inherits HomeTile {
+    VerticalLayout {
+        padding: 12px;
+        spacing: 2px;
+        alignment: space-between;
+
+        // 1. Tile Title
+        Text {
+            text: "Power System";
+            font-size: 14px;
+            font-weight: 700;
+            color: #ffffff;
+        }
+
+        // 2. Watts Row (Solar and Battery side-by-side)
+        HorizontalLayout {
+            spacing: 5px;
+
+            // Solar Power Component
+            VerticalLayout {
+                spacing: 4px;
+                Text { text: "Solar"; font-size: 12px; color: #aaaaaa; }
+                Text { text: "1240 W"; font-size: 20px; font-weight: 600; color: #f1c40f; } // Solar Gold
+            }
+
+            // Battery Power Component (Shows charging/using state)
+            VerticalLayout {
+                spacing: 4px;
+
+                Text { text: "Battery Link"; font-size: 12px; color: #aaaaaa; }
+                // Use a negative sign or color coding to differentiate charging vs discharging
+                Text { text: "+320 W"; font-size: 20px; font-weight: 600; color: #2ecc71; } // Charging Green
+            }
+        }
+
+        // 3. Battery State of Charge (SOC) Section
+        VerticalLayout {
+            spacing: 6px;
+            padding-bottom: 4px;
+            
+            HorizontalLayout {
+                alignment: space-between;
+                Text { text: "Battery SOC"; font-size: 13px; color: #cccccc; }
+                Text { text: "80%"; font-size: 15px; font-weight: 600; color: #ffffff; }
+            }
+
+            // Visual Progress Bar for SOC
+            Rectangle {
+                height: 8px;
+                background: rgba(255, 255, 255, 0.15);
+                border-radius: 4px;
+
+                // Inner filled bar
+                Rectangle {
+                    x: 0;
+                    // Bind the width percentage dynamically to your SOC logic
+                    width: parent.width * 80%; 
+                    height: parent.height;
+                    background: #2ecc71; // Dynamic green fill
+                    border-radius: 4px;
+                }
+            }
+        }
+    }
+}
+
+
+
 export component HomePage inherits Page {
     in-out property <length> header-row-height: 40px;
     in-out property <length> button-spacing: 35px;
 
     header-type: Header.none;
+    use-background: false;
 
-    Text {
-        x: BaseStyle.default-margin;
-        y: BaseStyle.default-margin;
-        text: @tr("Home Page");
-        color: BaseStyle.text-primary;
-        font-size: BaseStyle.title-font-size;
-        font-family: BaseStyle.medium-weight;
-        letter-spacing: 0.7px;
+    FlexboxLayout {
+        padding: 8px;
+        spacing: 8px;
+        flex-direction: row;
+
+        PowerHomeTile {
+
+        }
+
+        HomeTile {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 2px;
+                alignment: space-between;
+
+                Text {
+                    text: "Water Heater";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: #ffffff;
+                }
+            }
+        }
+
+        HomeTile {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 2px;
+                alignment: space-between;
+
+                Text {
+                    text: "Time / Temp";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: #ffffff;
+                }
+            }
+        }
+
+        HomeTile {
+            VerticalLayout {
+                padding: 12px;
+                spacing: 2px;
+                alignment: space-between;
+
+                Text {
+                    text: "System Status";
+                    font-size: 14px;
+                    font-weight: 700;
+                    color: #ffffff;
+                }
+            }
+        }
     }
 }

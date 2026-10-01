@@ -33,7 +33,7 @@ export global ComponentTheme {
         background: rgba(0, 0, 0, 0.5),
         active-background: #37c0db,
         active-icon-color: Colors.white,
-        inactive-icon-color: #3343af,
+        inactive-icon-color: #977aff,
         separator: Colors.white,
     };
 
@@ -108,11 +108,11 @@ export global BaseStyle {
     }
 
     property <ModeColors> shooting-stars: {
-        background: #000000,
+        background: #FFFFFF,
         background-image: @image-url("assets/background1-480x320.jpeg"),
         primary: #6036f8,
         secondary: #e9d4ff,
-        text-primary: #6036f8,
+        text-primary: #ffffff,
         text-secondary: #aa48ff,
         text-tertiary: #bd37fa,
         primary-button: #a34bff,
@@ -131,7 +131,7 @@ export global BaseStyle {
     };
 
     property <ModeColors> magic-kingdom: {
-        background: #000000,
+        background: #FFFFFF,
         background-image: @image-url("assets/background2-480x320.png"),
         primary: #6036f8,
         secondary: #e9d4ff,
@@ -154,7 +154,7 @@ export global BaseStyle {
     };
 
     property <ModeColors> verdant: {
-        background: #000000,
+        background: #FFFFFF,
         background-image: @image-url("assets/background3-480x320.png"),
         primary: #6036f8,
         secondary: #e9d4ff,
@@ -226,6 +226,8 @@ export global BaseStyle {
     out property <length> button-width: 162px;
     out property <length> button-height: 192px;
     out property <length> side-bar-width: 60px;
+    out property <length> content-area-width: 420px;
+    out property <length> content-area-height: 320px;
     out property <length> side-bar-margin: 10px;
     out property <length> default-margin: 11px;
 

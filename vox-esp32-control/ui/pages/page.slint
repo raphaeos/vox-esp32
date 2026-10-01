@@ -6,10 +6,11 @@ export component Page inherits Rectangle {
     in property <string> header;
     in property <string> subtitle;
     in property <Header> header-type: Header.back;
+    in property <bool> use-background: true;
 
     callback back;
 
-    background: BaseStyle.background;
+    background: use-background ? BaseStyle.background : transparent;
     // Stop accidentally getting clicks dur to animation only moving page half way offscreen
     visible: self.opacity > 0;
 

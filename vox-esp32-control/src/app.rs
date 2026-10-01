@@ -16,6 +16,7 @@ use futures::pin_mut;
 use futures::select_biased;
 use futures::FutureExt;
 use slint::ComponentHandle;
+use slint::PlatformError::SetPlatformError;
 use static_cell::StaticCell;
 use vox_esp32_core::async_channel::{lossy_bounded, LossyChannel};
 use vox_esp32_core::common::CoreError;
@@ -166,7 +167,7 @@ impl AppSyncManager {
                 msg_res = touched_rx_fut => {
                     match msg_res {
                         Ok(_) => {
-                            if let Err(e) = self.screensaver_mgr.touched(&mut self.ui).await {
+                            if let Err(e) = self.screensaver_mgr.touched().await {
                                 log::error!("Failed to trigger touched event for AppScreenSaverManager");
                             }
                         }
@@ -269,8 +270,6 @@ impl AppScreenSaverManager {
     }
 
     async fn update(&mut self, ui: &mut AppWindow) -> Duration {
-        let mut next_wait: Duration;
-
         let elapsed = Duration::from_micros(self.last_touch.elapsed().as_micros());
         if elapsed.ge(&self.cfg.delay_on) {
             // Screensaver on
@@ -282,23 +281,24 @@ impl AppScreenSaverManager {
 
             self.enable_screensaver(ui).await;
             self.set_brightness(self.cfg.brightness_dimmed).await;
-            next_wait = self.cfg.delay_cycle.sub(elapsed_cycle);
+
+            self.cfg.delay_cycle.sub(elapsed_cycle)
         } else if elapsed.ge(&self.cfg.delay_dim) {
             // Screen dimmed
             self.disable_screensaver(ui).await;
             self.set_brightness(self.cfg.brightness_dimmed).await;
-            next_wait = self.cfg.delay_on.sub(elapsed);
+
+            self.cfg.delay_on.sub(elapsed)
         } else {
             // Screen normal
             self.disable_screensaver(ui).await;
             self.set_brightness(self.cfg.brightness_on).await;
-            next_wait = self.cfg.delay_dim.sub(elapsed);
-        }
 
-        next_wait
+            self.cfg.delay_dim.sub(elapsed)
+        }
     }
 
-    async fn touched(&mut self, ui: &mut AppWindow) -> Result<()> {
+    async fn touched(&mut self) -> Result<()> {
         self.last_touch = Instant::now();
 
         Ok(())
