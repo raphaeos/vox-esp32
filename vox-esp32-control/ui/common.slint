@@ -178,7 +178,7 @@ export global BaseStyle {
 
 
     property <ModeColors> white-deer: {
-        background: #000000,
+        background: #FFFFFF,
         background-image: @image-url("assets/background4-480x320.png"),
         primary: #6036f8,
         secondary: #e9d4ff,
@@ -309,5 +309,6 @@ export struct AppState {power: PowerState}
 export global State {
     in property <Page> active-page: Page.home;
     in property <Theme> active-theme: Theme.ShootingStars;
+    in property <bool> screensaver-active: false;
     in property <AppState> app-state;
 }

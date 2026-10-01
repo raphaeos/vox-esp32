@@ -46,7 +46,6 @@ export component AppWindow inherits Window {
     full-screen: true;
     default-font-family: "Noto Sans";
     default-font-size: 30px;
-    background: BaseStyle.background;
 
     Image {
         source: BaseStyle.background-image;
@@ -56,12 +55,13 @@ export component AppWindow inherits Window {
     }
 
     Rectangle {
-        HorizontalLayout {
-            side-bar := Sidebar { }
+        if !State.screensaver-active:
+            HorizontalLayout {
+                side-bar := Sidebar { }
 
-            main-view := Rectangle {
-                if State.active-page == Page.home: home-page := HomePage { }
+                main-view := Rectangle {
+                    if State.active-page == Page.home: home-page := HomePage { }
+                }
             }
-        }
     }
 }

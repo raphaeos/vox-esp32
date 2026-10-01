@@ -6,7 +6,13 @@ use anyhow::{anyhow, Result};
 use async_channel::Receiver;
 use core::ptr::addr_of_mut;
 use embassy_executor::Spawner;
+use esp_hal::time::Instant;
 use esp_rtos::embassy::Executor;
+use ft6336u_dd::TouchData;
+use futures::future::{self};
+use futures::pin_mut;
+use futures::select_biased;
+use futures::FutureExt;
 use slint::ComponentHandle;
 use static_cell::StaticCell;
 use vox_esp32_core::async_channel::{lossy_bounded, LossyChannel};
@@ -19,6 +25,13 @@ static mut APP_CORE_STACK: esp_hal::system::Stack<65536> = esp_hal::system::Stac
 
 static APP_CORE_EXECUTOR: StaticCell<Executor> = StaticCell::new();
 
+const BRIGHTNESS_OFF: u8 = 0;
+const BRIGHTNESS_DIMMED: u8 = 20;
+const BRIGHTNESS_ON: u8 = 70;
+
+const SCREENSAVER_DIM_SCREEN_DELAY_MS: u32 = 30 * 1000; // 30 Seconds
+const SCREENSAVER_ON_DELAY_MS: u32 = 5 * 60 * 1000; // 5 Minutes
+
 #[embassy_executor::task]
 async fn app_task(
     spawner: Spawner,
@@ -30,11 +43,17 @@ async fn app_task(
 
     let (window, ui) = ui::init().expect("Failed to init UI");
 
-    display::spawn(&spawner, window, lcd_peripherals, touch_peripherals)
-        .await
-        .expect("Failed to spawn app task");
+    let (brightness_tx, touched_rx) = display::spawn(
+        &spawner,
+        window,
+        lcd_peripherals,
+        touch_peripherals,
+        BRIGHTNESS_ON,
+    )
+    .await
+    .expect("Failed to spawn app task");
 
-    let sync_mgr = AppSyncManager::new(ui, app_update_rx);
+    let sync_mgr = AppSyncManager::new(ui, app_update_rx, touched_rx, brightness_tx);
 
     spawner.spawn(app_sync_task(sync_mgr).expect("Failed to spawn app sync task"));
 }
@@ -96,23 +115,56 @@ impl AppSyncState {
 pub(crate) struct AppSyncManager {
     ui: AppWindow,
     app_update_rx: Receiver<AppSyncState>,
+    touched_rx: Receiver<TouchData>,
+    last_touch: Instant,
+    set_brightness_tx: LossyChannel<u8>,
 }
 
 impl AppSyncManager {
-    fn new(ui: AppWindow, app_update_rx: Receiver<AppSyncState>) -> Self {
-        Self { ui, app_update_rx }
+    fn new(
+        ui: AppWindow,
+        app_update_rx: Receiver<AppSyncState>,
+        touched_rx: Receiver<TouchData>,
+        set_brightness_tx: LossyChannel<u8>,
+    ) -> Self {
+        Self {
+            ui,
+            app_update_rx,
+            touched_rx,
+            last_touch: Instant::now(),
+            set_brightness_tx,
+        }
     }
 
     async fn run(&mut self) {
         loop {
-            match self.app_update_rx.recv().await {
-                Ok(update) => {
-                    if let Err(e) = self.sync_app_state(update).await {
-                        log::error!("Failed to sync app state: {:?}", e);
+            let app_update_rx_fut = self.app_update_rx.recv().fuse();
+            let touched_rx_fut = self.touched_rx.recv().fuse();
+
+            pin_mut!(app_update_rx_fut, touched_rx_fut);
+
+            select_biased! {
+                msg_res = touched_rx_fut => {
+                    match msg_res {
+                        Ok(_) => {
+                            self.last_touch = Instant::now();
+                        }
+                        Err(e) => {
+                            log::error!("Failed to receive touch event from rx: {:?}", e);
+                        }
                     }
                 }
-                Err(e) => {
-                    log::error!("Failed to receive app update from tx: {:?}", e);
+                msg_res = app_update_rx_fut => {
+                    match msg_res {
+                        Ok(update) => {
+                            if let Err(e) = self.sync_app_state(update).await {
+                                log::error!("Failed to sync app state: {:?}", e);
+                            }
+                        }
+                        Err(e) => {
+                            log::error!("Failed to receive app update from rx: {:?}", e);
+                        }
+                    }
                 }
             }
         }

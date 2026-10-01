@@ -35,6 +35,7 @@
 */
 use alloc::rc::Rc;
 use anyhow::Result;
+use async_channel::Receiver;
 use embassy_time::{Delay, Duration, Timer};
 use embedded_hal_bus::spi::ExclusiveDevice;
 use esp_hal::gpio::Pin;
@@ -55,13 +56,14 @@ use esp_hal::{
     time::Rate,
     Async, Blocking,
 };
-use ft6336u_dd::{Ft6336uAsync, Ft6336uInterface};
+use ft6336u_dd::{Ft6336uAsync, Ft6336uInterface, TouchData};
 use mipidsi::{
     interface::SpiInterface,
     models::ST7796,
     options::{ColorOrder, Orientation, Rotation},
     Builder,
 };
+use vox_esp32_core::async_channel::{lossy_bounded, LossyChannel};
 
 use core::ops::Range;
 use embassy_executor::Spawner;
@@ -70,6 +72,10 @@ use esp_hal::peripherals::{
     GPIO10, GPIO11, GPIO12, GPIO19, GPIO2, GPIO20, GPIO21, GPIO38, GPIO39, GPIO42, GPIO47, I2C0,
     LEDC, SPI2,
 };
+use futures::future::{self};
+use futures::pin_mut;
+use futures::select_biased;
+use futures::FutureExt;
 use slint::platform::{
     software_renderer::{LineBufferProvider, MinimalSoftwareWindow, Rgb565Pixel},
     PointerEventButton, WindowEvent,
@@ -104,9 +110,13 @@ pub async fn spawn(
     window: Rc<MinimalSoftwareWindow>,
     lcd_peripherals: DisplayLCDPeripherals,
     touch_peripherals: DisplayTouchPeripherals,
-) -> Result<()> {
-    DisplayManager::spawn(spawner, window.clone(), lcd_peripherals).await?;
-    TouchManager::spawn(spawner, window, touch_peripherals).await
+    init_brightness: u8,
+) -> Result<(LossyChannel<u8>, Receiver<TouchData>)> {
+    let brightness_tx =
+        DisplayManager::spawn(spawner, window.clone(), lcd_peripherals, init_brightness).await?;
+    let touched_rx = TouchManager::spawn(spawner, window, touch_peripherals).await?;
+
+    Ok((brightness_tx, touched_rx))
 }
 
 pub struct DisplayLCDPeripherals {
@@ -240,6 +250,8 @@ pub struct DisplayManager {
     window: Rc<MinimalSoftwareWindow>,
     screen_on: bool,
     chunk_buffer: [u16; UI_WIDTH as usize * 16],
+    brightness_rx: Receiver<u8>,
+    init_brightness: u8,
 }
 
 impl DisplayManager {
@@ -247,8 +259,11 @@ impl DisplayManager {
         spawner: &Spawner,
         window: Rc<MinimalSoftwareWindow>,
         peripherals: DisplayLCDPeripherals,
-    ) -> Result<()> {
+        init_brightness: u8,
+    ) -> Result<LossyChannel<u8>> {
         let (display, tft_bl) = init_display(peripherals)?;
+
+        let (brightness_tx, brightness_rx) = lossy_bounded(1);
 
         let mgr = DisplayManager {
             display,
@@ -256,25 +271,59 @@ impl DisplayManager {
             window,
             screen_on: false,
             chunk_buffer: [0u16; UI_WIDTH as usize * 16],
+            brightness_rx,
+            init_brightness,
         };
 
         spawner.spawn(display_task(mgr)?);
 
-        Ok(())
+        Ok(brightness_tx)
     }
 
     async fn run(&mut self) {
         log::info!("DisplayManager: Started");
 
+        let mut ui_did_render = false;
         loop {
-            if let Err(e) = self.draw().await {
-                log::error!("DisplayManager draw failed: {:?}", e);
-                Timer::after(Duration::from_millis(100)).await;
+            let brightness_rx_fut = self.brightness_rx.recv().fuse();
+
+            let draw_timeout_fut = if ui_did_render {
+                Timer::after(Duration::from_millis(1))
+            } else {
+                Timer::after(Duration::from_millis(16))
+            }
+            .fuse();
+
+            pin_mut!(brightness_rx_fut, draw_timeout_fut);
+
+            select_biased! {
+                msg_res = brightness_rx_fut => {
+                    match msg_res {
+                        Ok(brightness) => {
+                            if let Err(e) = self.set_brightness(brightness).await {
+                                log::warn!("Failed to set brightness: {:?}", e);
+                            }
+                        }
+                        Err(e) => {
+                            log::warn!("Receive error while trying to get a set brightness msg: {:?}", e);
+                        }
+                    }
+                }
+                _ = draw_timeout_fut => {
+                    match self.draw().await {
+                        Ok(res) => ui_did_render = res,
+                        Err(e) => {
+                            log::error!("DisplayManager draw failed: {:?}", e);
+                            Timer::after(Duration::from_millis(50)).await;
+                            ui_did_render = false;
+                        }
+                    }
+                }
             }
         }
     }
 
-    async fn draw(&mut self) -> Result<()> {
+    async fn draw(&mut self) -> Result<bool> {
         // Pump Slint's clock ticks so animations and property state systems update
         slint::platform::update_timers_and_animations();
 
@@ -299,16 +348,20 @@ impl DisplayManager {
         if ui_did_render {
             if !self.screen_on {
                 // Turn on screen
-                self.tft_bl
-                    .set_duty(50)
-                    .map_err(|e| anyhow::anyhow!("{:?}", e))?;
+                self.set_brightness(self.init_brightness).await?;
                 self.screen_on = true;
             }
         } else {
             Timer::after(Duration::from_millis(16)).await;
         }
 
-        Ok(())
+        Ok(ui_did_render)
+    }
+
+    async fn set_brightness(&self, brightness: u8) -> Result<()> {
+        self.tft_bl
+            .set_duty(brightness)
+            .map_err(|e| anyhow::anyhow!("{:?}", e))
     }
 }
 
@@ -439,6 +492,7 @@ pub struct TouchManager {
     touch_active: bool,
     last_x: f32,
     last_y: f32,
+    touched_tx: LossyChannel<TouchData>,
 }
 
 impl TouchManager {
@@ -446,8 +500,10 @@ impl TouchManager {
         spawner: &Spawner,
         window: Rc<MinimalSoftwareWindow>,
         peripherals: DisplayTouchPeripherals,
-    ) -> Result<()> {
+    ) -> Result<Receiver<TouchData>> {
         let (touch, touch_int) = init_touch(peripherals).await?;
+
+        let (touched_tx, touched_rx) = lossy_bounded(1);
 
         let mgr = TouchManager {
             touch,
@@ -456,11 +512,12 @@ impl TouchManager {
             touch_active: false,
             last_x: 0.0,
             last_y: 0.0,
+            touched_tx,
         };
 
         spawner.spawn(touch_task(mgr)?);
 
-        Ok(())
+        Ok(touched_rx)
     }
 
     async fn run(&mut self) {
@@ -483,6 +540,11 @@ impl TouchManager {
             let pressed = data.touch_count > 0;
 
             if pressed {
+                // Fire touched event
+                if let Err(e) = self.touched_tx.send_lossy(data).await {
+                    log::warn!("Failed to send touch event: {:?}", e);
+                }
+
                 // Extract raw integers from your FT6336U scan payload
                 let raw_x = data.points[0].x as i32;
                 let raw_y = data.points[0].y as i32;
